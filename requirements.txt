@@ -20,5 +20,5 @@ PyPDF2
 pdf2image
 pymupdf
 pytesseract
-pymysql
+mysql-connector-python
 email-validator

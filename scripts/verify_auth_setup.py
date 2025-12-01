@@ -16,12 +16,12 @@ def check_imports():
     
     # Check database module
     try:
-        from database.db_connection import db
+        import mysql.connector
         print("✓ Database connection module: OK")
         checks.append(True)
     except ImportError as e:
         print(f"✗ Database connection module: FAILED - {e}")
-        print("  → Install: pip install pymysql")
+        print("  → Install: pip install mysql-connector-python")
         checks.append(False)
     except Exception as e:
         print(f"⚠ Database connection module: Import OK but error - {e}")
@@ -124,7 +124,11 @@ def check_database_connection():
             tables = cursor.fetchall()
             
             required_tables = ['tr_roles', 'tr_users', 'tr_user_details']
-            table_names = [list(table.values())[0] for table in tables]
+            # Handle both dict (pymysql) and tuple (mysql-connector) cursors
+            if tables and isinstance(tables[0], dict):
+                table_names = [list(table.values())[0] for table in tables]
+            else:
+                table_names = [table[0] for table in tables]
             
             print(f"\nFound {len(table_names)} tables:")
             for table in table_names:

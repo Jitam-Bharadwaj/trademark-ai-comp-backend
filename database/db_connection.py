@@ -2,8 +2,8 @@
 Database connection module for MySQL
 Handles database connection pooling and operations
 """
-import pymysql
-from pymysql.cursors import DictCursor
+import mysql.connector
+from mysql.connector import Error
 from contextlib import contextmanager
 import logging
 import sys
@@ -33,24 +33,23 @@ class DatabaseConnection:
         """Get database connection with context manager"""
         connection = None
         try:
-            connection = pymysql.connect(
+            connection = mysql.connector.connect(
                 host=self.host,
                 port=self.port,
                 user=self.user,
                 password=self.password,
                 database=self.database,
                 charset=self.charset,
-                cursorclass=DictCursor,
                 autocommit=False
             )
             yield connection
         except Exception as e:
-            if connection:
+            if connection and connection.is_connected():
                 connection.rollback()
             logger.error(f"Database connection error: {e}")
             raise
         finally:
-            if connection:
+            if connection and connection.is_connected():
                 connection.close()
     
     def execute_query(self, query: str, params: tuple = None, fetch_one: bool = False, fetch_all: bool = False):
@@ -68,7 +67,7 @@ class DatabaseConnection:
             Query result based on fetch flags
         """
         with self.get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(dictionary=True)
             try:
                 if params:
                     cursor.execute(query, params)
@@ -88,6 +87,8 @@ class DatabaseConnection:
                 conn.rollback()
                 logger.error(f"Query execution error: {e}")
                 raise
+            finally:
+                cursor.close()
     
     def execute_many(self, query: str, params_list: list):
         """
@@ -110,8 +111,9 @@ class DatabaseConnection:
                 conn.rollback()
                 logger.error(f"Bulk execution error: {e}")
                 raise
+            finally:
+                cursor.close()
 
 
 # Global database instance
 db = DatabaseConnection()
-
