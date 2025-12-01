@@ -1,0 +1,20 @@
+2025-10-23 17:01:23 - trademark_api - INFO - Starting Trademark Comparison API
+2025-10-23 17:01:23 - trademark_api - INFO - Initializing image preprocessor...
+2025-10-23 17:01:23 - trademark_api - INFO - Initializing PDF extractor...
+2025-10-23 17:01:23 - trademark_api - INFO - Loading embedding model: openai/clip-vit-base-patch32
+2025-10-23 17:01:29 - trademark_api - INFO - Connecting to vector database...
+2025-10-23 17:01:29 - trademark_api - INFO - Connecting to cloud Qdrant: https://2c977cd3-71db-47c9-bd88-2aa5510b6aa9.us-east4-0.gcp.cloud.qdrant.io
+2025-10-23 17:01:33 - trademark_api - INFO - Successfully connected to vector database
+2025-10-23 17:01:33 - trademark_api - INFO - API startup complete
+2025-10-23 17:01:48 - trademark_api - INFO - Searching with threshold: 0.5
+2025-10-23 17:01:49 - trademark_api - INFO - Found 5 results with threshold 0.5
+2025-10-23 17:01:49 - trademark_api - INFO - Search completed: 5 results in 917.04ms
+2025-10-23 17:02:27 - trademark_api - INFO - Searching with threshold: 0.5
+2025-10-23 17:02:27 - trademark_api - INFO - Found 5 results with threshold 0.5
+2025-10-23 17:02:27 - trademark_api - INFO - Search completed: 5 results in 4440.35ms
+2025-10-23 17:02:56 - trademark_api - INFO - Searching with threshold: 0.5
+2025-10-23 17:02:57 - trademark_api - INFO - Found 5 results with threshold 0.5
+2025-10-23 17:02:57 - trademark_api - INFO - Search completed: 5 results in 946.91ms
+2025-10-23 17:03:15 - trademark_api - INFO - Searching with threshold: 0.5
+2025-10-23 17:03:15 - trademark_api - INFO - Found 5 results with threshold 0.5
+2025-10-23 17:03:15 - trademark_api - INFO - Search completed: 5 results in 853.73ms

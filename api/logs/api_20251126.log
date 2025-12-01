@@ -1,0 +1,22 @@
+2025-11-26 16:20:25 - trademark_api - INFO - Starting Trademark Comparison API
+2025-11-26 16:20:25 - trademark_api - INFO - Initializing image preprocessor...
+2025-11-26 16:20:25 - trademark_api - INFO - Initializing PDF extractor...
+2025-11-26 16:20:25 - trademark_api - INFO - Loading embedding model: openai/clip-vit-base-patch32
+2025-11-26 16:20:30 - trademark_api - INFO - Connecting to vector database...
+2025-11-26 16:20:30 - trademark_api - INFO - Connecting to cloud Qdrant: https://2c977cd3-71db-47c9-bd88-2aa5510b6aa9.us-east4-0.gcp.cloud.qdrant.io
+2025-11-26 16:20:33 - trademark_api - ERROR - Failed to connect to vector database: Unexpected Response: 404 (Not Found)
+Raw response content:
+b'404 page not found\n'
+2025-11-26 16:20:33 - trademark_api - WARNING - API will start without database connection. Some endpoints may not work.
+2025-11-26 16:20:33 - trademark_api - INFO - API startup complete
+2025-11-26 18:33:24 - trademark_api - INFO - Starting Trademark Comparison API
+2025-11-26 18:33:24 - trademark_api - INFO - Initializing image preprocessor...
+2025-11-26 18:33:24 - trademark_api - INFO - Initializing PDF extractor...
+2025-11-26 18:33:24 - trademark_api - INFO - Loading embedding model: openai/clip-vit-base-patch32
+2025-11-26 18:33:28 - trademark_api - INFO - Connecting to vector database...
+2025-11-26 18:33:28 - trademark_api - INFO - Connecting to cloud Qdrant: https://2c977cd3-71db-47c9-bd88-2aa5510b6aa9.us-east4-0.gcp.cloud.qdrant.io
+2025-11-26 18:33:30 - trademark_api - INFO - Successfully connected to vector database
+2025-11-26 18:33:30 - trademark_api - INFO - API startup complete
+2025-11-26 18:33:55 - trademark_api - INFO - Searching with threshold: 0.75
+2025-11-26 18:33:55 - trademark_api - INFO - Found 1 results with threshold 0.75
+2025-11-26 18:33:55 - trademark_api - INFO - Search completed: 1 results in 899.48ms
