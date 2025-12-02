@@ -138,18 +138,31 @@ class VectorDatabase:
                 )
             query_filter = Filter(must=conditions)
         
-        # Search
-        results = self.client.search(
-            collection_name=self.collection_name,
-            query_vector=query_embedding.tolist(),
-            limit=top_k,
-            score_threshold=score_threshold,
-            query_filter=query_filter
-        )
+        # Search using query_points (newer API)
+        # In newer versions, query_points uses 'query' parameter with a list
+        # Try passing the vector directly as 'query' parameter
+        query_vector_list = query_embedding.tolist()
+        
+        # Build parameters dict
+        query_params = {
+            "collection_name": self.collection_name,
+            "query": query_vector_list,
+            "limit": top_k,
+            "with_payload": True,
+            "with_vectors": False
+        }
+        
+        if score_threshold is not None:
+            query_params["score_threshold"] = score_threshold
+        
+        if query_filter is not None:
+            query_params["query_filter"] = query_filter
+        
+        results = self.client.query_points(**query_params)
         
         # Format results
         formatted_results = []
-        for result in results:
+        for result in results.points:
             # Clamp similarity score to valid range [0, 1] to avoid Pydantic validation errors
             similarity_score = max(0.0, min(1.0, float(result.score)))
             formatted_results.append({
