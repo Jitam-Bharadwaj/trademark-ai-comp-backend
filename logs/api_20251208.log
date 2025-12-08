@@ -1,0 +1,190 @@
+2025-12-08 10:35:12 - trademark_api - INFO - Starting Trademark Comparison API
+2025-12-08 10:35:12 - trademark_api - INFO - Initializing image preprocessor...
+2025-12-08 10:35:12 - trademark_api - INFO - Initializing PDF extractor...
+2025-12-08 10:35:12 - trademark_api - INFO - Initializing OCR extractor (method: tesseract)...
+2025-12-08 10:35:12 - trademark_api - INFO - OCR extractor initialized successfully
+2025-12-08 10:35:12 - trademark_api - INFO - Initializing text similarity calculator...
+2025-12-08 10:35:12 - trademark_api - INFO - Text similarity calculator initialized
+2025-12-08 10:35:12 - trademark_api - INFO - Pre-loading marks from database...
+2025-12-08 10:35:16 - trademark_api - INFO - Pre-loaded 1170 marks from database
+2025-12-08 10:35:16 - trademark_api - INFO - Loading embedding model: openai/clip-vit-base-patch32
+2025-12-08 10:35:20 - trademark_api - INFO - Connecting to vector database...
+2025-12-08 10:35:20 - trademark_api - INFO - Connecting to cloud Qdrant: https://2c977cd3-71db-47c9-bd88-2aa5510b6aa9.us-east4-0.gcp.cloud.qdrant.io
+2025-12-08 10:35:22 - trademark_api - INFO - Successfully connected to vector database
+2025-12-08 10:35:22 - trademark_api - INFO - API startup complete
+2025-12-08 10:56:57 - trademark_api - INFO - Text search query: 'Maharbaa'
+2025-12-08 10:56:57 - trademark_api - INFO - Generated text embedding for query: 'Maharbaa'
+2025-12-08 10:56:57 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 10:56:58 - trademark_api - INFO - Vector search found 10 results
+2025-12-08 10:56:58 - trademark_api - INFO - Comparing query text 'Maharbaa' against 1170 marks from database
+2025-12-08 10:56:58 - trademark_api - INFO - Text similarity found 6 matches above threshold
+2025-12-08 10:56:58 - trademark_api - INFO - Text search found 5 final results
+2025-12-08 10:57:01 - trademark_api - INFO - Fetched class, applicant, and application_no information for 2 applications
+2025-12-08 10:57:01 - trademark_api - INFO - Text search completed: 5 results in 4274.36ms
+2025-12-08 10:57:07 - trademark_api - INFO - Text search query: 'Maharbaa'
+2025-12-08 10:57:07 - trademark_api - INFO - Generated text embedding for query: 'Maharbaa'
+2025-12-08 10:57:07 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 10:57:08 - trademark_api - ERROR - Text search error: Unexpected Response: 400 (Bad Request)
+Raw response content:
+b'{"status":{"error":"Bad request: Index required but not found for \\"trademark_class\\" of one of the following types: [keyword]. Help: Create an index for this key or use a different filter."},"time ...'
+2025-12-08 10:57:20 - trademark_api - INFO - Text search query: 'Maharbaa'
+2025-12-08 10:57:20 - trademark_api - INFO - Generated text embedding for query: 'Maharbaa'
+2025-12-08 10:57:20 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 10:57:21 - trademark_api - ERROR - Text search error: Unexpected Response: 400 (Bad Request)
+Raw response content:
+b'{"status":{"error":"Bad request: Index required but not found for \\"trademark_class\\" of one of the following types: [keyword]. Help: Create an index for this key or use a different filter."},"time ...'
+2025-12-08 10:57:54 - trademark_api - INFO - Text search query: 'Maharbaa'
+2025-12-08 10:57:54 - trademark_api - INFO - Generated text embedding for query: 'Maharbaa'
+2025-12-08 10:57:54 - trademark_api - INFO - Vector search with threshold: 0.5
+2025-12-08 10:57:55 - trademark_api - ERROR - Text search error: Unexpected Response: 400 (Bad Request)
+Raw response content:
+b'{"status":{"error":"Bad request: Index required but not found for \\"trademark_class\\" of one of the following types: [keyword]. Help: Create an index for this key or use a different filter."},"time ...'
+2025-12-08 10:58:07 - trademark_api - INFO - Text search query: 'Maharbaa'
+2025-12-08 10:58:07 - trademark_api - INFO - Generated text embedding for query: 'Maharbaa'
+2025-12-08 10:58:07 - trademark_api - INFO - Vector search with threshold: 0.5
+2025-12-08 10:58:08 - trademark_api - ERROR - Text search error: Unexpected Response: 400 (Bad Request)
+Raw response content:
+b'{"status":{"error":"Bad request: Index required but not found for \\"trademark_class\\" of one of the following types: [keyword]. Help: Create an index for this key or use a different filter."},"time ...'
+2025-12-08 10:58:12 - trademark_api - INFO - Text search query: 'Maharbaa'
+2025-12-08 10:58:12 - trademark_api - INFO - Generated text embedding for query: 'Maharbaa'
+2025-12-08 10:58:12 - trademark_api - INFO - Vector search with threshold: 0.5
+2025-12-08 10:58:13 - trademark_api - ERROR - Text search error: Unexpected Response: 400 (Bad Request)
+Raw response content:
+b'{"status":{"error":"Bad request: Index required but not found for \\"trademark_class\\" of one of the following types: [keyword]. Help: Create an index for this key or use a different filter."},"time ...'
+2025-12-08 10:58:20 - trademark_api - INFO - Text search query: 'Maharbaa'
+2025-12-08 10:58:20 - trademark_api - INFO - Generated text embedding for query: 'Maharbaa'
+2025-12-08 10:58:20 - trademark_api - INFO - Vector search with threshold: 0.5
+2025-12-08 10:58:21 - trademark_api - ERROR - Text search error: Unexpected Response: 400 (Bad Request)
+Raw response content:
+b'{"status":{"error":"Bad request: Index required but not found for \\"trademark_class\\" of one of the following types: [keyword]. Help: Create an index for this key or use a different filter."},"time ...'
+2025-12-08 10:59:04 - trademark_api - INFO - Text search query: 'dsv'
+2025-12-08 10:59:04 - trademark_api - INFO - Generated text embedding for query: 'dsv'
+2025-12-08 10:59:04 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 10:59:05 - trademark_api - ERROR - Text search error: Unexpected Response: 400 (Bad Request)
+Raw response content:
+b'{"status":{"error":"Bad request: Index required but not found for \\"trademark_class\\" of one of the following types: [keyword]. Help: Create an index for this key or use a different filter."},"time ...'
+2025-12-08 10:59:31 - trademark_api - INFO - Text search query: 'Maharbaa'
+2025-12-08 10:59:31 - trademark_api - INFO - Generated text embedding for query: 'Maharbaa'
+2025-12-08 10:59:31 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 10:59:32 - trademark_api - ERROR - Text search error: Unexpected Response: 400 (Bad Request)
+Raw response content:
+b'{"status":{"error":"Bad request: Index required but not found for \\"trademark_class\\" of one of the following types: [keyword]. Help: Create an index for this key or use a different filter."},"time ...'
+2025-12-08 11:00:48 - trademark_api - INFO - Text search query: 'Maharba'
+2025-12-08 11:00:48 - trademark_api - INFO - Generated text embedding for query: 'Maharba'
+2025-12-08 11:00:48 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 11:00:49 - trademark_api - ERROR - Text search error: Unexpected Response: 400 (Bad Request)
+Raw response content:
+b'{"status":{"error":"Bad request: Index required but not found for \\"trademark_class\\" of one of the following types: [keyword]. Help: Create an index for this key or use a different filter."},"time ...'
+2025-12-08 11:00:58 - trademark_api - INFO - Text search query: 'Maharba'
+2025-12-08 11:00:58 - trademark_api - INFO - Generated text embedding for query: 'Maharba'
+2025-12-08 11:00:58 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 11:00:59 - trademark_api - ERROR - Text search error: Unexpected Response: 400 (Bad Request)
+Raw response content:
+b'{"status":{"error":"Bad request: Index required but not found for \\"trademark_class\\" of one of the following types: [keyword]. Help: Create an index for this key or use a different filter."},"time ...'
+2025-12-08 11:01:05 - trademark_api - INFO - Text search query: 'Maharba'
+2025-12-08 11:01:05 - trademark_api - INFO - Generated text embedding for query: 'Maharba'
+2025-12-08 11:01:05 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 11:01:05 - trademark_api - ERROR - Text search error: Unexpected Response: 400 (Bad Request)
+Raw response content:
+b'{"status":{"error":"Bad request: Index required but not found for \\"trademark_class\\" of one of the following types: [keyword]. Help: Create an index for this key or use a different filter."},"time ...'
+2025-12-08 11:06:51 - trademark_api - INFO - Starting Trademark Comparison API
+2025-12-08 11:06:51 - trademark_api - INFO - Initializing image preprocessor...
+2025-12-08 11:06:51 - trademark_api - INFO - Initializing PDF extractor...
+2025-12-08 11:06:51 - trademark_api - INFO - Initializing OCR extractor (method: tesseract)...
+2025-12-08 11:06:51 - trademark_api - INFO - OCR extractor initialized successfully
+2025-12-08 11:06:51 - trademark_api - INFO - Initializing text similarity calculator...
+2025-12-08 11:06:51 - trademark_api - INFO - Text similarity calculator initialized
+2025-12-08 11:06:51 - trademark_api - INFO - Pre-loading marks from database...
+2025-12-08 11:06:55 - trademark_api - INFO - Pre-loaded 1170 marks from database
+2025-12-08 11:06:55 - trademark_api - INFO - Loading embedding model: openai/clip-vit-base-patch32
+2025-12-08 11:06:59 - trademark_api - INFO - Connecting to vector database...
+2025-12-08 11:06:59 - trademark_api - INFO - Connecting to cloud Qdrant: https://2c977cd3-71db-47c9-bd88-2aa5510b6aa9.us-east4-0.gcp.cloud.qdrant.io
+2025-12-08 11:07:02 - trademark_api - INFO - Successfully connected to vector database
+2025-12-08 11:07:02 - trademark_api - INFO - API startup complete
+2025-12-08 11:07:05 - trademark_api - INFO - Starting Trademark Comparison API
+2025-12-08 11:07:05 - trademark_api - INFO - Initializing image preprocessor...
+2025-12-08 11:07:05 - trademark_api - INFO - Initializing PDF extractor...
+2025-12-08 11:07:05 - trademark_api - INFO - Initializing OCR extractor (method: tesseract)...
+2025-12-08 11:07:05 - trademark_api - INFO - OCR extractor initialized successfully
+2025-12-08 11:07:05 - trademark_api - INFO - Initializing text similarity calculator...
+2025-12-08 11:07:05 - trademark_api - INFO - Text similarity calculator initialized
+2025-12-08 11:07:05 - trademark_api - INFO - Pre-loading marks from database...
+2025-12-08 11:07:09 - trademark_api - INFO - Pre-loaded 1170 marks from database
+2025-12-08 11:07:09 - trademark_api - INFO - Loading embedding model: openai/clip-vit-base-patch32
+2025-12-08 11:07:12 - trademark_api - INFO - Connecting to vector database...
+2025-12-08 11:07:12 - trademark_api - INFO - Connecting to cloud Qdrant: https://2c977cd3-71db-47c9-bd88-2aa5510b6aa9.us-east4-0.gcp.cloud.qdrant.io
+2025-12-08 11:07:14 - trademark_api - INFO - Successfully connected to vector database
+2025-12-08 11:07:14 - trademark_api - INFO - API startup complete
+2025-12-08 11:07:17 - trademark_api - INFO - Starting Trademark Comparison API
+2025-12-08 11:07:17 - trademark_api - INFO - Initializing image preprocessor...
+2025-12-08 11:07:17 - trademark_api - INFO - Initializing PDF extractor...
+2025-12-08 11:07:17 - trademark_api - INFO - Initializing OCR extractor (method: tesseract)...
+2025-12-08 11:07:17 - trademark_api - INFO - OCR extractor initialized successfully
+2025-12-08 11:07:17 - trademark_api - INFO - Initializing text similarity calculator...
+2025-12-08 11:07:17 - trademark_api - INFO - Text similarity calculator initialized
+2025-12-08 11:07:17 - trademark_api - INFO - Pre-loading marks from database...
+2025-12-08 11:07:20 - trademark_api - INFO - Pre-loaded 1170 marks from database
+2025-12-08 11:07:20 - trademark_api - INFO - Loading embedding model: openai/clip-vit-base-patch32
+2025-12-08 11:07:25 - trademark_api - INFO - Connecting to vector database...
+2025-12-08 11:07:25 - trademark_api - INFO - Connecting to cloud Qdrant: https://2c977cd3-71db-47c9-bd88-2aa5510b6aa9.us-east4-0.gcp.cloud.qdrant.io
+2025-12-08 11:07:27 - trademark_api - INFO - Successfully connected to vector database
+2025-12-08 11:07:27 - trademark_api - INFO - API startup complete
+2025-12-08 11:07:30 - trademark_api - INFO - Starting Trademark Comparison API
+2025-12-08 11:07:30 - trademark_api - INFO - Initializing image preprocessor...
+2025-12-08 11:07:30 - trademark_api - INFO - Initializing PDF extractor...
+2025-12-08 11:07:30 - trademark_api - INFO - Initializing OCR extractor (method: tesseract)...
+2025-12-08 11:07:30 - trademark_api - INFO - OCR extractor initialized successfully
+2025-12-08 11:07:30 - trademark_api - INFO - Initializing text similarity calculator...
+2025-12-08 11:07:30 - trademark_api - INFO - Text similarity calculator initialized
+2025-12-08 11:07:30 - trademark_api - INFO - Pre-loading marks from database...
+2025-12-08 11:07:33 - trademark_api - INFO - Pre-loaded 1170 marks from database
+2025-12-08 11:07:33 - trademark_api - INFO - Loading embedding model: openai/clip-vit-base-patch32
+2025-12-08 11:07:37 - trademark_api - INFO - Connecting to vector database...
+2025-12-08 11:07:37 - trademark_api - INFO - Connecting to cloud Qdrant: https://2c977cd3-71db-47c9-bd88-2aa5510b6aa9.us-east4-0.gcp.cloud.qdrant.io
+2025-12-08 11:07:39 - trademark_api - INFO - Successfully connected to vector database
+2025-12-08 11:07:39 - trademark_api - INFO - API startup complete
+2025-12-08 11:07:55 - trademark_api - INFO - Text search query: 'Maharbaa'
+2025-12-08 11:07:55 - trademark_api - INFO - Generated text embedding for query: 'Maharbaa'
+2025-12-08 11:07:55 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 11:07:56 - trademark_api - INFO - Vector search found 5 results
+2025-12-08 11:07:56 - trademark_api - INFO - Comparing query text 'Maharbaa' against 1170 marks from database
+2025-12-08 11:07:56 - trademark_api - INFO - Text similarity found 6 matches above threshold
+2025-12-08 11:07:56 - trademark_api - INFO - Text search found 4 final results
+2025-12-08 11:07:59 - trademark_api - INFO - Fetched class, applicant, and application_no information for 4 applications
+2025-12-08 11:07:59 - trademark_api - INFO - Text search completed: 4 results in 3990.93ms
+2025-12-08 11:08:20 - trademark_api - INFO - Text search query: 'Maharba'
+2025-12-08 11:08:20 - trademark_api - INFO - Generated text embedding for query: 'Maharba'
+2025-12-08 11:08:20 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 11:08:21 - trademark_api - INFO - Vector search found 0 results
+2025-12-08 11:08:21 - trademark_api - INFO - Comparing query text 'Maharba' against 1170 marks from database
+2025-12-08 11:08:21 - trademark_api - INFO - Text similarity found 6 matches above threshold
+2025-12-08 11:08:21 - trademark_api - INFO - Text search found 5 final results
+2025-12-08 11:08:25 - trademark_api - INFO - Fetched class, applicant, and application_no information for 5 applications
+2025-12-08 11:08:25 - trademark_api - INFO - Text search completed: 5 results in 5130.26ms
+2025-12-08 11:09:10 - trademark_api - INFO - Text search query: 'Maharba'
+2025-12-08 11:09:10 - trademark_api - INFO - Generated text embedding for query: 'Maharba'
+2025-12-08 11:09:10 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 11:09:11 - trademark_api - INFO - Vector search found 2 results
+2025-12-08 11:09:11 - trademark_api - INFO - Comparing query text 'Maharba' against 1170 marks from database
+2025-12-08 11:09:11 - trademark_api - INFO - Text similarity found 6 matches above threshold
+2025-12-08 11:09:11 - trademark_api - INFO - Text search found 5 final results
+2025-12-08 11:09:14 - trademark_api - INFO - Fetched class, applicant, and application_no information for 5 applications
+2025-12-08 11:09:14 - trademark_api - INFO - Text search completed: 5 results in 4012.19ms
+2025-12-08 11:09:32 - trademark_api - INFO - Text search query: 'Maharba'
+2025-12-08 11:09:32 - trademark_api - INFO - Generated text embedding for query: 'Maharba'
+2025-12-08 11:09:32 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 11:09:33 - trademark_api - INFO - Vector search found 10 results
+2025-12-08 11:09:33 - trademark_api - INFO - Comparing query text 'Maharba' against 1170 marks from database
+2025-12-08 11:09:33 - trademark_api - INFO - Text similarity found 6 matches above threshold
+2025-12-08 11:09:33 - trademark_api - INFO - Text search found 5 final results
+2025-12-08 11:09:37 - trademark_api - INFO - Fetched class, applicant, and application_no information for 4 applications
+2025-12-08 11:09:37 - trademark_api - INFO - Text search completed: 5 results in 4282.47ms
+2025-12-08 11:10:58 - trademark_api - INFO - Text search query: 'Maharba'
+2025-12-08 11:10:58 - trademark_api - INFO - Generated text embedding for query: 'Maharba'
+2025-12-08 11:10:58 - trademark_api - INFO - Vector search with threshold: 1.0
+2025-12-08 11:10:59 - trademark_api - INFO - Vector search found 0 results
+2025-12-08 11:10:59 - trademark_api - INFO - Comparing query text 'Maharba' against 1170 marks from database
+2025-12-08 11:10:59 - trademark_api - INFO - Text similarity found 6 matches above threshold
+2025-12-08 11:10:59 - trademark_api - INFO - Text search found 5 final results
+2025-12-08 11:11:02 - trademark_api - INFO - Fetched class, applicant, and application_no information for 5 applications
+2025-12-08 11:11:02 - trademark_api - INFO - Text search completed: 5 results in 4172.60ms

@@ -22,3 +22,9 @@ pymupdf
 pytesseract
 mysql-connector-python
 email-validator
+# Text similarity dependencies
+python-Levenshtein
+fuzzywuzzy
+phonetics
+# Optional: EasyOCR (alternative to Tesseract, no system dependencies needed)
+# easyocr

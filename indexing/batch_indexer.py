@@ -143,6 +143,8 @@ class BatchIndexer:
                 'trademark_id': str(row['trademark_id']),
                 'name': row.get('name', ''),
                 'trademark_class': str(row.get('class', '')),
+                'applicant_name': row.get('applicant_name', ''),
+                'application_no': row.get('application_no', ''),
                 'registration_date': str(row.get('registration_date', '')),
                 'owner': row.get('owner', ''),
                 'image_path': str(image_path),

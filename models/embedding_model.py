@@ -85,6 +85,54 @@ class EmbeddingGenerator:
         # Convert to numpy
         return embeddings.cpu().numpy()
     
+    @torch.no_grad()
+    def generate_text_embedding(self, text: str) -> np.ndarray:
+        """
+        Generate embedding for text using CLIP text encoder
+        
+        Args:
+            text: Text string to embed
+            
+        Returns:
+            Normalized embedding vector
+        """
+        # Process text
+        inputs = self.processor(text=[text], return_tensors="pt", padding=True, truncation=True)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        
+        # Generate embedding
+        outputs = self.model.get_text_features(**inputs)
+        
+        # Normalize
+        embedding = outputs / outputs.norm(dim=-1, keepdim=True)
+        
+        # Convert to numpy
+        return embedding.cpu().numpy()[0]
+    
+    @torch.no_grad()
+    def generate_text_embeddings_batch(self, texts: List[str]) -> np.ndarray:
+        """
+        Generate embeddings for batch of texts
+        
+        Args:
+            texts: List of text strings
+            
+        Returns:
+            Array of normalized embeddings
+        """
+        # Process texts
+        inputs = self.processor(text=texts, return_tensors="pt", padding=True, truncation=True)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        
+        # Generate embeddings
+        outputs = self.model.get_text_features(**inputs)
+        
+        # Normalize
+        embeddings = outputs / outputs.norm(dim=-1, keepdim=True)
+        
+        # Convert to numpy
+        return embeddings.cpu().numpy()
+    
     def get_embedding_dimension(self) -> int:
         """Get the dimension of embeddings"""
         return self.embedding_dim

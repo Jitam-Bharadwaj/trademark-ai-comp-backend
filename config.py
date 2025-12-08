@@ -34,13 +34,32 @@ class Config:
     
     # PDF Processing
     PDF_DPI = int(os.getenv("PDF_DPI", "300"))
-    MIN_IMAGE_SIZE = int(os.getenv("MIN_IMAGE_SIZE", "100"))  # Minimum width/height in pixels
+    MIN_IMAGE_SIZE = int(os.getenv("MIN_IMAGE_SIZE", "30"))  # Minimum width/height in pixels (lowered to catch small logos)
     MAX_IMAGES_PER_PDF = int(os.getenv("MAX_IMAGES_PER_PDF", "50"))  # Safety limit
     
     # Processing
     BATCH_SIZE = int(os.getenv("BATCH_SIZE", "32"))
     NUM_WORKERS = int(os.getenv("NUM_WORKERS", "4"))
     SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.5"))
+    
+    # Text Similarity Configuration
+    ENABLE_OCR = os.getenv("ENABLE_OCR", "true").lower() == "true"
+    OCR_METHOD = os.getenv("OCR_METHOD", "tesseract")  # 'tesseract' or 'easyocr'
+    OCR_LANGUAGE = os.getenv("OCR_LANGUAGE", "eng")  # Language code for OCR
+    
+    # Hybrid Search Weights (must sum to 1.0)
+    VECTOR_SIMILARITY_WEIGHT = float(os.getenv("VECTOR_SIMILARITY_WEIGHT", "0.7"))
+    TEXT_SIMILARITY_WEIGHT = float(os.getenv("TEXT_SIMILARITY_WEIGHT", "0.3"))
+    TEXT_SIMILARITY_THRESHOLD = float(os.getenv("TEXT_SIMILARITY_THRESHOLD", "0.5"))  # Lowered from 0.6 to catch more matches
+    
+    # Text Similarity Algorithm Weights
+    LEVENSHTEIN_WEIGHT = float(os.getenv("LEVENSHTEIN_WEIGHT", "0.4"))
+    JARO_WINKLER_WEIGHT = float(os.getenv("JARO_WINKLER_WEIGHT", "0.3"))
+    TOKEN_SORT_WEIGHT = float(os.getenv("TOKEN_SORT_WEIGHT", "0.2"))
+    PHONETIC_WEIGHT = float(os.getenv("PHONETIC_WEIGHT", "0.1"))
+    
+    # Database Caching
+    CACHE_MARKS = os.getenv("CACHE_MARKS", "true").lower() == "true"
     
     # Monitoring
     ENABLE_MONITORING = os.getenv("ENABLE_MONITORING", "true").lower() == "true"

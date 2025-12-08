@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 import io
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from PIL import Image
@@ -18,7 +19,9 @@ from database.vector_db import VectorDatabase
 from utils.logger import setup_logger
 from pdf_processing.pdf_extractor import PDFTrademarkExtractor
 from api.auth_routes import router as auth_router
-from PIL import Image
+from utils.ocr_extractor import OCRTextExtractor
+from utils.text_similarity import TextSimilarity
+from database.application_queries import application_queries
 from PIL.PngImagePlugin import PngImageFile
 
 # Increase the MAX_TEXT_CHUNK limit (default is ~1MB, increase to 10MB)
@@ -92,18 +95,36 @@ preprocessor = None
 embedding_generator = None
 vector_db = None
 pdf_extractor = None
+ocr_extractor = None
+text_similarity = None
 logger = None
 
 # Pydantic models
 class SearchResult(BaseModel):
     trademark_id: str
     similarity_score: float = Field(..., ge=0.0, le=1.0)
+    vector_similarity_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    text_similarity_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    matched_mark: Optional[str] = None
+    source: str = Field(..., description="Source of trademark: 'Self Database Trademark' or 'Indian Trademark Journal'")
+    trademark_class: Optional[str] = Field(None, description="Trademark class")
+    applicant_name: Optional[str] = Field(None, description="Applicant name")
+    application_no: Optional[str] = Field(None, description="Application number")
+    trademark_type: Optional[str] = Field(None, description="Type: 'text_only' or 'image_based'")
+    has_image: Optional[bool] = Field(None, description="Whether this trademark has an associated image")
     metadata: dict
 
 class SearchResponse(BaseModel):
     query_time_ms: float
     total_results: int
+    extracted_text: Optional[str] = None
     results: List[SearchResult]
+
+class TextSearchRequest(BaseModel):
+    query_text: str = Field(..., description="Text query to search for similar trademarks")
+    top_k: int = Field(10, ge=1, le=100, description="Number of results to return")
+    threshold: Optional[float] = Field(None, ge=0.0, le=1.0, description="Minimum similarity threshold (0-1)")
+    trademark_class: Optional[str] = Field(None, description="Filter by trademark class")
 
 class TrademarkInfo(BaseModel):
     trademark_id: str
@@ -143,7 +164,7 @@ class PDFBatchResult(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     """Initialize components on startup"""
-    global preprocessor, embedding_generator, vector_db, pdf_extractor, logger
+    global preprocessor, embedding_generator, vector_db, pdf_extractor, ocr_extractor, text_similarity, logger
     
     # Create directories
     Config.create_directories()
@@ -166,6 +187,40 @@ async def startup_event():
         min_size=Config.MIN_IMAGE_SIZE,
         max_images=Config.MAX_IMAGES_PER_PDF
     )
+    
+    # Initialize OCR extractor if enabled
+    if Config.ENABLE_OCR:
+        try:
+            logger.info(f"Initializing OCR extractor (method: {Config.OCR_METHOD})...")
+            ocr_extractor = OCRTextExtractor(
+                ocr_method=Config.OCR_METHOD,
+                language=Config.OCR_LANGUAGE
+            )
+            logger.info("OCR extractor initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize OCR extractor: {e}. OCR will be disabled.")
+            ocr_extractor = None
+    else:
+        logger.info("OCR is disabled in configuration")
+        ocr_extractor = None
+    
+    # Initialize text similarity calculator
+    logger.info("Initializing text similarity calculator...")
+    text_similarity = TextSimilarity(
+        use_levenshtein=True,
+        use_phonetic=True,
+        use_fuzzywuzzy=True
+    )
+    logger.info("Text similarity calculator initialized")
+    
+    # Pre-load marks from database if caching is enabled
+    if Config.CACHE_MARKS:
+        try:
+            logger.info("Pre-loading marks from database...")
+            marks = application_queries.get_all_marks(use_cache=True)
+            logger.info(f"Pre-loaded {len(marks)} marks from database")
+        except Exception as e:
+            logger.warning(f"Failed to pre-load marks: {e}")
     
     logger.info(f"Loading embedding model: {Config.EMBEDDING_MODEL}")
     embedding_generator = EmbeddingGenerator(
@@ -226,7 +281,7 @@ async def search_similar_trademarks(
     trademark_class: Optional[str] = None
 ):
     """
-    Search for similar trademarks
+    Search for similar trademarks using hybrid vector + text similarity
     
     Args:
         file: Uploaded trademark image
@@ -235,7 +290,7 @@ async def search_similar_trademarks(
         trademark_class: Filter by trademark class
         
     Returns:
-        Search results with similarity scores
+        Search results with combined similarity scores
     """
     if vector_db is None:
         raise HTTPException(status_code=503, detail="Vector database not available. Please ensure Qdrant is running.")
@@ -260,36 +315,415 @@ async def search_similar_trademarks(
         if preprocessed is None:
             raise HTTPException(status_code=400, detail="Failed to preprocess image")
         
-        # Generate embedding
+        # Generate embedding for vector search
         embedding = embedding_generator.generate_embedding(preprocessed)
         
-        # Build filter
+        # Extract text from image using OCR (if enabled)
+        extracted_text = None
+        if Config.ENABLE_OCR and ocr_extractor and ocr_extractor.is_available():
+            try:
+                extracted_text = ocr_extractor.extract_text(image)
+                # Only use extracted text if it's meaningful (at least 2 characters)
+                if extracted_text and len(extracted_text.strip()) >= 2:
+                    logger.info(f"Extracted text from image: '{extracted_text[:50]}...' (truncated)")
+                else:
+                    logger.info("OCR extracted text is too short or empty, skipping text similarity")
+                    extracted_text = None
+            except Exception as e:
+                logger.warning(f"OCR extraction failed: {e}")
+                extracted_text = None
+        
+        # Vector similarity search
         filter_dict = {}
         if trademark_class:
             filter_dict['trademark_class'] = trademark_class
         
-        # Search
         search_threshold = threshold or Config.SIMILARITY_THRESHOLD
-        logger.info(f"Searching with threshold: {search_threshold}")
+        logger.info(f"Vector search with threshold: {search_threshold}")
         
-        results = vector_db.search_similar(
+        vector_results = vector_db.search_similar(
             query_embedding=embedding,
-            top_k=top_k,
+            top_k=top_k * 2,  # Get more results for hybrid scoring
             score_threshold=search_threshold,
             filter_dict=filter_dict if filter_dict else None
         )
         
-        logger.info(f"Found {len(results)} results with threshold {search_threshold}")
+        logger.info(f"Vector search found {len(vector_results)} results")
+        
+        # Also search with text embedding if we have extracted text (for text-only trademarks)
+        text_vector_results = []
+        if extracted_text and embedding_generator:
+            try:
+                # Generate text embedding from extracted text
+                text_embedding = embedding_generator.generate_text_embedding(extracted_text)
+                logger.info(f"Generated text embedding for extracted text: '{extracted_text}'")
+                
+                # Search vector database with text embedding (this will find text-only trademarks)
+                text_vector_results = vector_db.search_similar(
+                    query_embedding=text_embedding,
+                    top_k=top_k * 2,
+                    score_threshold=search_threshold * 0.8,  # Slightly lower threshold for text-to-text matching
+                    filter_dict=filter_dict if filter_dict else None
+                )
+                
+                logger.info(f"Text embedding search found {len(text_vector_results)} results")
+                
+                # Add text vector results to vector_results, avoiding duplicates
+                existing_ids = {r['trademark_id'] for r in vector_results}
+                for text_result in text_vector_results:
+                    if text_result['trademark_id'] not in existing_ids:
+                        vector_results.append(text_result)
+                        logger.info(f"Added text-only trademark from text embedding search: {text_result.get('metadata', {}).get('mark', 'unknown')}")
+                
+            except Exception as e:
+                logger.error(f"Text embedding search error: {e}", exc_info=True)
+        
+        # Text similarity search (if OCR extracted text) - for MySQL database marks
+        text_results_map = {}
+        mark_text_to_app_id = {}  # Map mark text to application_id for lookup
+        
+        if extracted_text and text_similarity:
+            try:
+                # Get all marks from database
+                marks = application_queries.get_all_marks(use_cache=True)
+                logger.info(f"Comparing extracted text '{extracted_text}' against {len(marks)} marks from database")
+                
+                # Create mark text to app_id mapping
+                mark_texts = []
+                for mark_data in marks:
+                    if not mark_data.get('mark'):
+                        continue
+                    mark_text = mark_data['mark']
+                    app_id = mark_data['application_id']
+                    mark_texts.append(mark_text)
+                    mark_text_to_app_id[mark_text] = app_id
+                
+                # Find best text matches using optimized method
+                text_matches = text_similarity.find_best_matches(
+                    query_text=extracted_text,
+                    candidate_texts=mark_texts,
+                    top_k=top_k * 2,
+                    threshold=Config.TEXT_SIMILARITY_THRESHOLD
+                )
+                
+                # Create map of application_id -> text similarity score
+                for matched_text, text_score in text_matches:
+                    app_id = mark_text_to_app_id.get(matched_text)
+                    if app_id:
+                        text_results_map[app_id] = {
+                            'score': text_score,
+                            'mark': matched_text
+                        }
+                
+                logger.info(f"Text similarity found {len(text_results_map)} matches above threshold")
+                
+                # Debug: Log some sample marks for troubleshooting
+                if len(text_results_map) == 0 and len(marks) > 0:
+                    logger.debug(f"Sample marks from database (first 5): {[m['mark'] for m in marks[:5]]}")
+                    logger.debug(f"Extracted text: '{extracted_text}' (normalized: '{text_similarity.normalize_text(extracted_text)}')")
+                
+                # If no matches found with fuzzy matching, try exact/partial match as fallback
+                if len(text_results_map) == 0:
+                    logger.info("No fuzzy matches found, trying exact/partial match fallback...")
+                    normalized_extracted = text_similarity.normalize_text(extracted_text)
+                    
+                    for mark_data in marks:
+                        if not mark_data.get('mark'):
+                            continue
+                        mark_text = mark_data['mark']
+                        app_id = mark_data['application_id']
+                        
+                        # Normalize mark text
+                        normalized_mark = text_similarity.normalize_text(mark_text)
+                        
+                        # Check for exact match (case-insensitive)
+                        if normalized_extracted == normalized_mark:
+                            text_results_map[app_id] = {
+                                'score': 1.0,
+                                'mark': mark_text
+                            }
+                            logger.info(f"Found exact match: '{mark_text}' (app_id: {app_id})")
+                        # Check if extracted text is contained in mark or vice versa
+                        elif normalized_extracted in normalized_mark or normalized_mark in normalized_extracted:
+                            # Calculate similarity for partial matches
+                            text_score = text_similarity.calculate_similarity(
+                                extracted_text,
+                                mark_text,
+                                weights={
+                                    'levenshtein': Config.LEVENSHTEIN_WEIGHT,
+                                    'jaro_winkler': Config.JARO_WINKLER_WEIGHT,
+                                    'token_sort': Config.TOKEN_SORT_WEIGHT,
+                                    'phonetic': Config.PHONETIC_WEIGHT
+                                }
+                            )
+                            if text_score >= 0.5:  # Lower threshold for partial matches
+                                text_results_map[app_id] = {
+                                    'score': text_score,
+                                    'mark': mark_text
+                                }
+                                logger.info(f"Found partial match: '{mark_text}' (app_id: {app_id}, score: {text_score:.2f})")
+                    
+                    if text_results_map:
+                        logger.info(f"Fallback search found {len(text_results_map)} matches")
+                        
+            except Exception as e:
+                logger.error(f"Text similarity search error: {e}", exc_info=True)
+                text_results_map = {}
+        
+        # Helper function to determine source of trademark
+        # Create a set of all application IDs from text_results_map for quick lookup
+        database_app_ids = set(text_results_map.keys()) if text_results_map else set()
+        
+        def determine_source(trademark_id: str, is_text_match: bool = False) -> str:
+            """
+            Determine the source of a trademark
+            
+            Args:
+                trademark_id: Trademark ID
+                is_text_match: Whether this is a text-only match from database
+                
+            Returns:
+                "Self Database Trademark" or "Indian Trademark Journal"
+            """
+            # If it's a text-only match, it's definitely from Self Database
+            if is_text_match:
+                return "Self Database Trademark"
+            
+            # Check if trademark_id is numeric (application_id)
+            try:
+                app_id = int(trademark_id)
+                # First check if it's in our text_results_map (already matched)
+                if app_id in database_app_ids:
+                    return "Self Database Trademark"
+                
+                # If not in text_results_map, check if it exists in database
+                # This handles cases where vector search found a trademark that exists in DB
+                # but didn't match via text similarity
+                mark = application_queries.get_mark_by_application_id(app_id)
+                if mark is not None:
+                    return "Self Database Trademark"
+            except (ValueError, TypeError):
+                # Not a numeric ID, likely from vector database (UUID or other format)
+                pass
+            
+            # Default to Indian Trademark Journal (from vector database)
+            return "Indian Trademark Journal"
+        
+        # Combine vector and text results
+        combined_results = []
+        result_ids_seen = set()
+        
+        # Process vector results
+        for vec_result in vector_results:
+            trademark_id = vec_result['trademark_id']
+            vector_score = vec_result['similarity_score']
+            
+            # Get text similarity if available
+            text_score = None
+            matched_mark = None
+            is_text_match = False
+            
+            # Try to match by application_id (if trademark_id is numeric)
+            try:
+                app_id = int(trademark_id)
+                if app_id in text_results_map:
+                    text_score = text_results_map[app_id]['score']
+                    matched_mark = text_results_map[app_id]['mark']
+                    is_text_match = True
+            except (ValueError, TypeError):
+                # If trademark_id is not numeric, try to find by mark in metadata
+                if extracted_text and text_similarity:
+                    metadata = vec_result.get('metadata', {})
+                    mark_in_metadata = metadata.get('mark') or metadata.get('name', '')
+                    is_text_only = metadata.get('trademark_type') == 'text_only' or metadata.get('extraction_method') == 'text_only'
+                    
+                    if mark_in_metadata:
+                        text_score = text_similarity.calculate_similarity(
+                            extracted_text,
+                            mark_in_metadata,
+                            weights={
+                                'levenshtein': Config.LEVENSHTEIN_WEIGHT,
+                                'jaro_winkler': Config.JARO_WINKLER_WEIGHT,
+                                'token_sort': Config.TOKEN_SORT_WEIGHT,
+                                'phonetic': Config.PHONETIC_WEIGHT
+                            }
+                        )
+                        
+                        # For text-only trademarks, use a lower threshold since image-to-text embedding similarity might be lower
+                        # But text-to-text similarity should be high
+                        threshold_to_use = Config.TEXT_SIMILARITY_THRESHOLD * 0.7 if is_text_only else Config.TEXT_SIMILARITY_THRESHOLD
+                        
+                        if text_score >= threshold_to_use:
+                            matched_mark = mark_in_metadata
+                            # For text-only trademarks with good text match, boost the combined score
+                            if is_text_only and text_score >= 0.7:
+                                # If text similarity is high, we can trust it even if vector score is lower
+                                pass
+            
+            # Check if this is a text-only trademark
+            metadata = vec_result.get('metadata', {})
+            is_text_only = metadata.get('trademark_type') == 'text_only' or metadata.get('extraction_method') == 'text_only'
+            
+            # Calculate combined score
+            if text_score is not None:
+                # For text-only trademarks, weight text similarity more heavily
+                if is_text_only:
+                    # Text-only: weight text similarity more (60% text, 40% vector)
+                    combined_score = (
+                        vector_score * 0.4 +
+                        text_score * 0.6
+                    )
+                else:
+                    # Image-based: use standard weights
+                    combined_score = (
+                        vector_score * Config.VECTOR_SIMILARITY_WEIGHT +
+                        text_score * Config.TEXT_SIMILARITY_WEIGHT
+                    )
+            else:
+                combined_score = vector_score
+            
+            # Determine source
+            source = determine_source(trademark_id, is_text_match)
+            
+            combined_results.append({
+                'trademark_id': trademark_id,
+                'similarity_score': combined_score,
+                'vector_similarity_score': vector_score,
+                'text_similarity_score': text_score,
+                'matched_mark': matched_mark or metadata.get('mark', ''),
+                'source': source,
+                'trademark_class': metadata.get('trademark_class'),
+                'applicant_name': metadata.get('applicant_name'),
+                'application_no': metadata.get('application_no'),
+                'trademark_type': 'text_only' if is_text_only else 'image_based',
+                'has_image': not is_text_only,
+                'metadata': metadata
+            })
+            
+            result_ids_seen.add(trademark_id)
+        
+        # Add text-only results (if any high-scoring text matches not in vector results)
+        # IMPORTANT: Even if vector search returned 0 results, we should still return text matches
+        if text_results_map:
+            for app_id, text_data in text_results_map.items():
+                app_id_str = str(app_id)
+                if app_id_str not in result_ids_seen:
+                    # For text-only matches, use the text score directly (not weighted down)
+                    # This ensures good text matches are returned even without vector matches
+                    text_only_score = text_data['score']
+                    
+                    # Text-only matches are always from Self Database
+                    source = "Self Database Trademark"
+                    
+                    combined_results.append({
+                        'trademark_id': app_id_str,
+                        'similarity_score': text_only_score,  # Use full text score for text-only matches
+                        'vector_similarity_score': None,
+                        'text_similarity_score': text_data['score'],
+                        'matched_mark': text_data['mark'],
+                        'source': source,
+                        'trademark_class': None,  # Will be populated later for database trademarks
+                        'applicant_name': None,  # Will be populated later for database trademarks
+                        'application_no': None,  # Will be populated later for database trademarks
+                        'trademark_type': 'text_only',
+                        'has_image': False,
+                        'metadata': {
+                            'application_id': app_id,
+                            'source': 'text_match_only'
+                        }
+                    })
+        
+        # Sort by combined score (descending)
+        combined_results.sort(key=lambda x: x['similarity_score'], reverse=True)
+        
+        # Take top_k results
+        final_results = combined_results[:top_k]
+        
+        # Filter by threshold - but use a lower threshold for text-only matches
+        final_threshold = threshold or Config.SIMILARITY_THRESHOLD
+        filtered_results = []
+        for r in final_results:
+            metadata = r.get('metadata', {})
+            is_text_only = metadata.get('trademark_type') == 'text_only' or metadata.get('extraction_method') == 'text_only'
+            
+            # For text-only matches, use text similarity threshold instead
+            if r.get('vector_similarity_score') is None and r.get('text_similarity_score') is not None:
+                # Text-only match: use text similarity threshold
+                if r['text_similarity_score'] >= Config.TEXT_SIMILARITY_THRESHOLD:
+                    filtered_results.append(r)
+            elif is_text_only:
+                # Text-only trademark found via vector search: use lower threshold
+                # Accept if either vector score or combined score meets threshold
+                text_threshold = Config.TEXT_SIMILARITY_THRESHOLD * 0.7
+                if (r.get('text_similarity_score', 0) >= text_threshold or 
+                    r['similarity_score'] >= final_threshold * 0.7):
+                    filtered_results.append(r)
+            else:
+                # Hybrid or vector-only match: use combined threshold
+                if r['similarity_score'] >= final_threshold:
+                    filtered_results.append(r)
+        
+        final_results = filtered_results
+        
+        logger.info(f"Hybrid search found {len(final_results)} final results")
+        
+        # Fetch trademark class information for Self Database Trademarks
+        # Collect all application IDs from Self Database results
+        database_app_ids_to_fetch = []
+        for result in final_results:
+            if result.get('source') == 'Self Database Trademark':
+                try:
+                    app_id = int(result['trademark_id'])
+                    database_app_ids_to_fetch.append(app_id)
+                except (ValueError, TypeError):
+                    # Not a numeric ID, skip
+                    pass
+        
+        # Batch fetch application details including trademark class
+        applications_data = {}
+        if database_app_ids_to_fetch:
+            try:
+                applications_data = application_queries.get_applications_by_ids(database_app_ids_to_fetch)
+                logger.info(f"Fetched class, applicant, and application_no information for {len(applications_data)} applications")
+            except Exception as e:
+                logger.warning(f"Error fetching application details: {e}")
+                applications_data = {}
+        
+        # Add trademark_class, applicant_name, and application_no to results
+        for result in final_results:
+            if result.get('source') == 'Self Database Trademark':
+                try:
+                    app_id = int(result['trademark_id'])
+                    app_data = applications_data.get(app_id)
+                    if app_data:
+                        result['trademark_class'] = app_data.get('trademark_class') or ''
+                        result['applicant_name'] = app_data.get('applicant_name') or ''
+                        result['application_no'] = app_data.get('application_no') or ''
+                    else:
+                        result['trademark_class'] = ''
+                        result['applicant_name'] = ''
+                        result['application_no'] = ''
+                except (ValueError, TypeError):
+                    result['trademark_class'] = None
+                    result['applicant_name'] = None
+                    result['application_no'] = None
+            else:
+                # For Indian Trademark Journal, get class from metadata if available
+                metadata = result.get('metadata', {})
+                result['trademark_class'] = metadata.get('trademark_class') or None
+                result['applicant_name'] = None  # Not available for Indian Trademark Journal
+                result['application_no'] = None  # Not available for Indian Trademark Journal
         
         # Calculate query time
         query_time = (time.time() - start_time) * 1000  # in milliseconds
         
-        logger.info(f"Search completed: {len(results)} results in {query_time:.2f}ms")
+        logger.info(f"Search completed: {len(final_results)} results in {query_time:.2f}ms")
         
         return SearchResponse(
             query_time_ms=query_time,
-            total_results=len(results),
-            results=[SearchResult(**r) for r in results]
+            total_results=len(final_results),
+            extracted_text=extracted_text,
+            results=[SearchResult(**r) for r in final_results]
         )
         
     except HTTPException:
@@ -297,6 +731,373 @@ async def search_similar_trademarks(
     except Exception as e:
         logger.error(f"Search error: {e}")
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+# Text-based search endpoint
+@app.post("/search-text", response_model=SearchResponse, tags=["Image Search"])
+async def search_trademarks_by_text(
+    request: TextSearchRequest
+):
+    """
+    Search for similar trademarks using text input (hybrid vector + text similarity)
+    
+    Args:
+        request: TextSearchRequest containing query_text, top_k, threshold, and optional trademark_class
+        
+    Returns:
+        Search results with combined similarity scores
+    """
+    if vector_db is None:
+        raise HTTPException(status_code=503, detail="Vector database not available. Please ensure Qdrant is running.")
+    
+    if embedding_generator is None:
+        raise HTTPException(status_code=503, detail="Embedding generator not available. Please restart the server.")
+    
+    import time
+    start_time = time.time()
+    
+    try:
+        query_text = request.query_text.strip()
+        if not query_text or len(query_text) < 1:
+            raise HTTPException(status_code=400, detail="Query text cannot be empty")
+        
+        top_k = request.top_k
+        threshold = request.threshold
+        trademark_class = request.trademark_class
+        
+        logger.info(f"Text search query: '{query_text}'")
+        
+        # Generate text embedding for vector search
+        text_embedding = embedding_generator.generate_text_embedding(query_text)
+        logger.info(f"Generated text embedding for query: '{query_text}'")
+        
+        # Vector similarity search using text embedding
+        filter_dict = {}
+        if trademark_class:
+            filter_dict['trademark_class'] = trademark_class
+        
+        search_threshold = threshold or Config.SIMILARITY_THRESHOLD
+        logger.info(f"Vector search with threshold: {search_threshold}")
+        
+        vector_results = vector_db.search_similar(
+            query_embedding=text_embedding,
+            top_k=top_k * 2,  # Get more results for hybrid scoring
+            score_threshold=search_threshold * 0.8,  # Slightly lower threshold for text-to-text/image matching
+            filter_dict=filter_dict if filter_dict else None
+        )
+        
+        logger.info(f"Vector search found {len(vector_results)} results")
+        
+        # Text similarity search against MySQL database marks
+        text_results_map = {}
+        mark_text_to_app_id = {}  # Map mark text to application_id for lookup
+        
+        if text_similarity:
+            try:
+                # Get all marks from database
+                marks = application_queries.get_all_marks(use_cache=True)
+                logger.info(f"Comparing query text '{query_text}' against {len(marks)} marks from database")
+                
+                # Create mark text to app_id mapping
+                mark_texts = []
+                for mark_data in marks:
+                    if not mark_data.get('mark'):
+                        continue
+                    mark_text = mark_data['mark']
+                    app_id = mark_data['application_id']
+                    mark_texts.append(mark_text)
+                    mark_text_to_app_id[mark_text] = app_id
+                
+                # Find best text matches using optimized method
+                text_matches = text_similarity.find_best_matches(
+                    query_text=query_text,
+                    candidate_texts=mark_texts,
+                    top_k=top_k * 2,
+                    threshold=Config.TEXT_SIMILARITY_THRESHOLD
+                )
+                
+                # Create map of application_id -> text similarity score
+                for matched_text, text_score in text_matches:
+                    app_id = mark_text_to_app_id.get(matched_text)
+                    if app_id:
+                        text_results_map[app_id] = {
+                            'score': text_score,
+                            'mark': matched_text
+                        }
+                
+                logger.info(f"Text similarity found {len(text_results_map)} matches above threshold")
+                
+                # If no matches found with fuzzy matching, try exact/partial match as fallback
+                if len(text_results_map) == 0:
+                    logger.info("No fuzzy matches found, trying exact/partial match fallback...")
+                    normalized_query = text_similarity.normalize_text(query_text)
+                    
+                    for mark_data in marks:
+                        if not mark_data.get('mark'):
+                            continue
+                        mark_text = mark_data['mark']
+                        app_id = mark_data['application_id']
+                        
+                        # Normalize mark text
+                        normalized_mark = text_similarity.normalize_text(mark_text)
+                        
+                        # Check for exact match (case-insensitive)
+                        if normalized_query == normalized_mark:
+                            text_results_map[app_id] = {
+                                'score': 1.0,
+                                'mark': mark_text
+                            }
+                            logger.info(f"Found exact match: '{mark_text}' (app_id: {app_id})")
+                        # Check if query text is contained in mark or vice versa
+                        elif normalized_query in normalized_mark or normalized_mark in normalized_query:
+                            # Calculate similarity for partial matches
+                            text_score = text_similarity.calculate_similarity(
+                                query_text,
+                                mark_text,
+                                weights={
+                                    'levenshtein': Config.LEVENSHTEIN_WEIGHT,
+                                    'jaro_winkler': Config.JARO_WINKLER_WEIGHT,
+                                    'token_sort': Config.TOKEN_SORT_WEIGHT,
+                                    'phonetic': Config.PHONETIC_WEIGHT
+                                }
+                            )
+                            if text_score >= 0.5:  # Lower threshold for partial matches
+                                text_results_map[app_id] = {
+                                    'score': text_score,
+                                    'mark': mark_text
+                                }
+                                logger.info(f"Found partial match: '{mark_text}' (app_id: {app_id}, score: {text_score:.2f})")
+                    
+                    if text_results_map:
+                        logger.info(f"Fallback search found {len(text_results_map)} matches")
+                        
+            except Exception as e:
+                logger.error(f"Text similarity search error: {e}", exc_info=True)
+                text_results_map = {}
+        
+        # Helper function to determine source of trademark
+        database_app_ids = set(text_results_map.keys()) if text_results_map else set()
+        
+        def determine_source(trademark_id: str, is_text_match: bool = False) -> str:
+            """Determine the source of a trademark"""
+            if is_text_match:
+                return "Self Database Trademark"
+            
+            try:
+                app_id = int(trademark_id)
+                if app_id in database_app_ids:
+                    return "Self Database Trademark"
+                mark = application_queries.get_mark_by_application_id(app_id)
+                if mark is not None:
+                    return "Self Database Trademark"
+            except (ValueError, TypeError):
+                pass
+            
+            return "Indian Trademark Journal"
+        
+        # Combine vector and text results
+        combined_results = []
+        result_ids_seen = set()
+        
+        # Process vector results
+        for vec_result in vector_results:
+            trademark_id = vec_result['trademark_id']
+            vector_score = vec_result['similarity_score']
+            
+            # Get text similarity if available
+            text_score = None
+            matched_mark = None
+            is_text_match = False
+            
+            # Try to match by application_id (if trademark_id is numeric)
+            try:
+                app_id = int(trademark_id)
+                if app_id in text_results_map:
+                    text_score = text_results_map[app_id]['score']
+                    matched_mark = text_results_map[app_id]['mark']
+                    is_text_match = True
+            except (ValueError, TypeError):
+                # If trademark_id is not numeric, try to find by mark in metadata
+                if text_similarity:
+                    metadata = vec_result.get('metadata', {})
+                    mark_in_metadata = metadata.get('mark') or metadata.get('name', '')
+                    is_text_only = metadata.get('trademark_type') == 'text_only' or metadata.get('extraction_method') == 'text_only'
+                    
+                    if mark_in_metadata:
+                        text_score = text_similarity.calculate_similarity(
+                            query_text,
+                            mark_in_metadata,
+                            weights={
+                                'levenshtein': Config.LEVENSHTEIN_WEIGHT,
+                                'jaro_winkler': Config.JARO_WINKLER_WEIGHT,
+                                'token_sort': Config.TOKEN_SORT_WEIGHT,
+                                'phonetic': Config.PHONETIC_WEIGHT
+                            }
+                        )
+                        
+                        threshold_to_use = Config.TEXT_SIMILARITY_THRESHOLD * 0.7 if is_text_only else Config.TEXT_SIMILARITY_THRESHOLD
+                        
+                        if text_score >= threshold_to_use:
+                            matched_mark = mark_in_metadata
+            
+            # Check if this is a text-only trademark
+            metadata = vec_result.get('metadata', {})
+            is_text_only = metadata.get('trademark_type') == 'text_only' or metadata.get('extraction_method') == 'text_only'
+            
+            # Calculate combined score
+            if text_score is not None:
+                # For text-only trademarks, weight text similarity more heavily
+                if is_text_only:
+                    # Text-only: weight text similarity more (60% text, 40% vector)
+                    combined_score = (
+                        vector_score * 0.4 +
+                        text_score * 0.6
+                    )
+                else:
+                    # Image-based: use standard weights
+                    combined_score = (
+                        vector_score * Config.VECTOR_SIMILARITY_WEIGHT +
+                        text_score * Config.TEXT_SIMILARITY_WEIGHT
+                    )
+            else:
+                combined_score = vector_score
+            
+            # Determine source
+            source = determine_source(trademark_id, is_text_match)
+            
+            combined_results.append({
+                'trademark_id': trademark_id,
+                'similarity_score': combined_score,
+                'vector_similarity_score': vector_score,
+                'text_similarity_score': text_score,
+                'matched_mark': matched_mark or metadata.get('mark', ''),
+                'source': source,
+                'trademark_class': metadata.get('trademark_class'),
+                'applicant_name': metadata.get('applicant_name'),
+                'application_no': metadata.get('application_no'),
+                'trademark_type': 'text_only' if is_text_only else 'image_based',
+                'has_image': not is_text_only,
+                'metadata': metadata
+            })
+            
+            result_ids_seen.add(trademark_id)
+        
+        # Add text-only results (if any high-scoring text matches not in vector results)
+        if text_results_map:
+            for app_id, text_data in text_results_map.items():
+                app_id_str = str(app_id)
+                if app_id_str not in result_ids_seen:
+                    text_only_score = text_data['score']
+                    source = "Self Database Trademark"
+                    
+                    combined_results.append({
+                        'trademark_id': app_id_str,
+                        'similarity_score': text_only_score,
+                        'vector_similarity_score': None,
+                        'text_similarity_score': text_data['score'],
+                        'matched_mark': text_data['mark'],
+                        'source': source,
+                        'trademark_class': None,
+                        'applicant_name': None,
+                        'application_no': None,
+                        'trademark_type': 'text_only',
+                        'has_image': False,
+                        'metadata': {
+                            'application_id': app_id,
+                            'source': 'text_match_only'
+                        }
+                    })
+        
+        # Sort by combined score (descending)
+        combined_results.sort(key=lambda x: x['similarity_score'], reverse=True)
+        
+        # Take top_k results
+        final_results = combined_results[:top_k]
+        
+        # Filter by threshold
+        final_threshold = threshold or Config.SIMILARITY_THRESHOLD
+        filtered_results = []
+        for r in final_results:
+            metadata = r.get('metadata', {})
+            is_text_only = metadata.get('trademark_type') == 'text_only' or metadata.get('extraction_method') == 'text_only'
+            
+            # For text-only matches, use text similarity threshold instead
+            if r.get('vector_similarity_score') is None and r.get('text_similarity_score') is not None:
+                if r['text_similarity_score'] >= Config.TEXT_SIMILARITY_THRESHOLD:
+                    filtered_results.append(r)
+            elif is_text_only:
+                text_threshold = Config.TEXT_SIMILARITY_THRESHOLD * 0.7
+                if (r.get('text_similarity_score', 0) >= text_threshold or 
+                    r['similarity_score'] >= final_threshold * 0.7):
+                    filtered_results.append(r)
+            else:
+                if r['similarity_score'] >= final_threshold:
+                    filtered_results.append(r)
+        
+        final_results = filtered_results
+        
+        logger.info(f"Text search found {len(final_results)} final results")
+        
+        # Fetch trademark class information for Self Database Trademarks
+        database_app_ids_to_fetch = []
+        for result in final_results:
+            if result.get('source') == 'Self Database Trademark':
+                try:
+                    app_id = int(result['trademark_id'])
+                    database_app_ids_to_fetch.append(app_id)
+                except (ValueError, TypeError):
+                    pass
+        
+        # Batch fetch application details
+        applications_data = {}
+        if database_app_ids_to_fetch:
+            try:
+                applications_data = application_queries.get_applications_by_ids(database_app_ids_to_fetch)
+                logger.info(f"Fetched class, applicant, and application_no information for {len(applications_data)} applications")
+            except Exception as e:
+                logger.warning(f"Error fetching application details: {e}")
+                applications_data = {}
+        
+        # Add trademark_class, applicant_name, and application_no to results
+        for result in final_results:
+            if result.get('source') == 'Self Database Trademark':
+                try:
+                    app_id = int(result['trademark_id'])
+                    app_data = applications_data.get(app_id)
+                    if app_data:
+                        result['trademark_class'] = app_data.get('trademark_class') or ''
+                        result['applicant_name'] = app_data.get('applicant_name') or ''
+                        result['application_no'] = app_data.get('application_no') or ''
+                    else:
+                        result['trademark_class'] = ''
+                        result['applicant_name'] = ''
+                        result['application_no'] = ''
+                except (ValueError, TypeError):
+                    result['trademark_class'] = None
+                    result['applicant_name'] = None
+                    result['application_no'] = None
+            else:
+                metadata = result.get('metadata', {})
+                result['trademark_class'] = metadata.get('trademark_class') or None
+                result['applicant_name'] = metadata.get('applicant_name') or None
+                result['application_no'] = metadata.get('application_no') or None
+        
+        # Calculate query time
+        query_time = (time.time() - start_time) * 1000  # in milliseconds
+        
+        logger.info(f"Text search completed: {len(final_results)} results in {query_time:.2f}ms")
+        
+        return SearchResponse(
+            query_time_ms=query_time,
+            total_results=len(final_results),
+            extracted_text=query_text,
+            results=[SearchResult(**r) for r in final_results]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Text search error: {e}")
+        raise HTTPException(status_code=500, detail=f"Text search failed: {str(e)}")
 
 # Get trademark by ID
 @app.get("/trademark/{trademark_id}", response_model=TrademarkInfo, tags=["Image Search"])
@@ -709,6 +1510,8 @@ async def index_extracted_images(
                     'trademark_id': trademark_id,
                     'name': trademark_id,
                     'trademark_class': '',
+                    'applicant_name': '',
+                    'application_no': '',
                     'registration_date': '',
                     'owner': '',
                     'image_path': str(image_path),
@@ -804,6 +1607,19 @@ async def process_pdf_and_index(
             # Extract images from PDF
             extracted_images = pdf_extractor.extract_images_from_pdf(temp_pdf_path)
             
+            # Extract text-only trademarks (trademarks without images)
+            text_only_trademarks = pdf_extractor.extract_text_only_trademarks(temp_pdf_path)
+            
+            # Filter out text-only trademarks that already have corresponding images
+            # (to avoid duplicates - if a page has both image and text, we prefer the image)
+            pages_with_images = {metadata.get('page', 1) for _, metadata in extracted_images}
+            filtered_text_trademarks = [
+                tm for tm in text_only_trademarks 
+                if tm.get('page', 1) not in pages_with_images or not tm.get('application_no')
+            ]
+            
+            logger.info(f"Extracted {len(extracted_images)} images and {len(filtered_text_trademarks)} text-only trademarks")
+            
             # Prepare response data
             images_data = []
             saved_paths = []
@@ -858,6 +1674,8 @@ async def process_pdf_and_index(
             # Now handle indexing
             indexed_count = 0
             indexing_errors = []
+            text_indexed_count = 0
+            text_indexing_errors = []
             
             if auto_index and extracted_images:
                 logger.info(f"Starting indexing of {len(extracted_images)} images...")
@@ -892,9 +1710,11 @@ async def process_pdf_and_index(
                         metadata_dict = {
                             'trademark_id': image_uuid,
                             'name': image_id,  # Keep human-readable name
-                            'trademark_class': '',
+                            'trademark_class': metadata.get('trademark_class', ''),
+                            'applicant_name': metadata.get('applicant_name', ''),
+                            'application_no': metadata.get('application_no', ''),
                             'registration_date': '',
-                            'owner': '',
+                            'owner': metadata.get('applicant_name', ''),  # Use applicant_name as owner if available
                             'image_path': str(image_path) if image_path else 'in_memory',
                             'indexed_at': datetime.now().isoformat(),
                             'source': 'pdf_extraction',
@@ -924,6 +1744,76 @@ async def process_pdf_and_index(
                         logger.error(f"Error indexing {image_id}: {e}")
                         
                 logger.info(f"Indexing completed: {indexed_count} successful, {len(indexing_errors)} failed")
+            
+            # Now handle text-only trademarks indexing
+            text_indexed_count = 0
+            text_indexing_errors = []
+            
+            if auto_index and filtered_text_trademarks:
+                logger.info(f"Starting indexing of {len(filtered_text_trademarks)} text-only trademarks...")
+                
+                for tm_metadata in filtered_text_trademarks:
+                    try:
+                        # Generate UUID for this text-only trademark
+                        text_uuid = str(uuid.uuid4())
+                        
+                        # Use application_no as identifier if available, otherwise use mark name
+                        if tm_metadata.get('application_no'):
+                            tm_id = f"{Path(file.filename).stem}_text_{tm_metadata['application_no']}"
+                        elif tm_metadata.get('mark'):
+                            # Create ID from mark name (sanitized)
+                            mark_id = re.sub(r'[^a-zA-Z0-9]', '_', tm_metadata['mark'])[:50]
+                            tm_id = f"{Path(file.filename).stem}_text_{mark_id}"
+                        else:
+                            tm_id = f"{Path(file.filename).stem}_text_{text_uuid[:8]}"
+                        
+                        # Get mark name for embedding
+                        mark_name = tm_metadata.get('mark', '')
+                        if not mark_name:
+                            # If no mark name extracted, skip this trademark
+                            text_indexing_errors.append(f"No mark name found for application {tm_metadata.get('application_no', 'unknown')}")
+                            continue
+                        
+                        # Generate text embedding using CLIP
+                        embedding = embedding_generator.generate_text_embedding(mark_name)
+                        
+                        # Prepare metadata
+                        metadata_dict = {
+                            'trademark_id': text_uuid,
+                            'name': mark_name,  # Use mark name as the name
+                            'mark': mark_name,
+                            'trademark_class': tm_metadata.get('trademark_class', ''),
+                            'applicant_name': tm_metadata.get('applicant_name', ''),
+                            'application_no': tm_metadata.get('application_no', ''),
+                            'registration_date': '',
+                            'owner': tm_metadata.get('applicant_name', ''),
+                            'image_path': '',  # No image for text-only trademarks
+                            'indexed_at': datetime.now().isoformat(),
+                            'source': 'pdf_text_extraction',
+                            'pdf_source': file.filename,
+                            'page': tm_metadata.get('page', 1),
+                            'extraction_method': 'text_only',
+                            'trademark_type': 'text_only'
+                        }
+                        
+                        # Insert into database
+                        success = vector_db.insert_trademark(
+                            trademark_id=text_uuid,
+                            embedding=embedding,
+                            metadata=metadata_dict
+                        )
+                        
+                        if success:
+                            text_indexed_count += 1
+                            logger.info(f"Successfully indexed text-only trademark: {mark_name} (UUID: {text_uuid})")
+                        else:
+                            text_indexing_errors.append(f"Database insertion failed for {tm_id}")
+                            
+                    except Exception as e:
+                        text_indexing_errors.append(f"Error indexing text trademark {tm_metadata.get('mark', 'unknown')}: {str(e)}")
+                        logger.error(f"Error indexing text-only trademark: {e}")
+                
+                logger.info(f"Text-only indexing completed: {text_indexed_count} successful, {len(text_indexing_errors)} failed")
         
         finally:
             # Clean up temporary PDF
@@ -936,12 +1826,16 @@ async def process_pdf_and_index(
             "pdf_filename": file.filename,
             "total_images_extracted": len(extracted_images),
             "images_indexed": indexed_count,
+            "text_only_trademarks_found": len(filtered_text_trademarks),
+            "text_only_trademarks_indexed": text_indexed_count,
             "indexing_errors": len(indexing_errors),
+            "text_indexing_errors": len(text_indexing_errors),
             "total_processing_time_ms": total_processing_time,
             "extraction_time_ms": extraction_time,
             "indexing_time_ms": total_processing_time - extraction_time,
             "images": images_data,
-            "indexing_error_details": indexing_errors[:10]  # Limit error details
+            "indexing_error_details": indexing_errors[:10],  # Limit error details
+            "text_indexing_error_details": text_indexing_errors[:10]  # Limit error details
         }
         
     except HTTPException:

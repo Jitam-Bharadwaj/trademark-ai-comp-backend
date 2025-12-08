@@ -119,9 +119,11 @@ class PDFBatchProcessor:
             metadata = {
                 'trademark_id': trademark_id,
                 'name': f"{base_name} - Image {idx + 1}",
-                'class': '',  # To be filled manually or via OCR
+                'class': extract_meta.get('trademark_class', ''),  # Extracted from PDF text
+                'applicant_name': extract_meta.get('applicant_name', ''),  # Extracted from PDF text
+                'application_no': extract_meta.get('application_no', ''),  # Extracted from PDF text
                 'registration_date': '',  # To be filled manually
-                'owner': '',  # To be filled manually
+                'owner': extract_meta.get('applicant_name', ''),  # Use applicant_name as owner
                 'image_filename': saved_path.name,
                 'source_pdf': pdf_path.name,
                 'pdf_page': extract_meta['page'],
