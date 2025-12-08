@@ -16,6 +16,8 @@ aiofiles
 tqdm
 pytest
 requests
+beautifulsoup4
+schedule
 PyPDF2
 pdf2image
 pymupdf
