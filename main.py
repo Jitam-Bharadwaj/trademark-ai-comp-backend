@@ -1132,6 +1132,24 @@ async def get_database_stats():
         logger.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Refresh marks cache (for text similarity)
+@app.post("/refresh-marks-cache", tags=["Database Management"])
+async def refresh_marks_cache():
+    """
+    Refresh the cached marks used for text similarity.
+    Use this after adding/updating marks in the database to make them available for search without restarting.
+    """
+    try:
+        application_queries.refresh_cache()
+        marks = application_queries.get_all_marks(use_cache=True)
+        count = len(marks)
+        logger.info(f"Marks cache refreshed: {count} marks loaded")
+        return {"status": "ok", "cached_marks": count}
+    except Exception as e:
+        logger.error(f"Error refreshing marks cache: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to refresh marks cache: {str(e)}")
+
 # Batch search endpoint
 @app.post("/batch-search", tags=["Image Search"])
 async def batch_search_trademarks(
