@@ -194,6 +194,13 @@ def run_cycle():
         processed = process_pdf(file_path)
         if not processed:
             logger.warning("Processing failed for %s; file retained for retry", file_path.name)
+        else:
+            # Remove successfully processed PDF to save disk
+            try:
+                file_path.unlink()
+                logger.info("Deleted processed file: %s", file_path.name)
+            except Exception as exc:
+                logger.warning("Could not delete %s: %s", file_path.name, exc)
         if PROCESSING_PAUSE_SECONDS > 0:
             logger.info("Pausing %s seconds before next PDF", PROCESSING_PAUSE_SECONDS)
             time.sleep(PROCESSING_PAUSE_SECONDS)
