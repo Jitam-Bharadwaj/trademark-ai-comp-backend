@@ -1,8 +1,9 @@
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, PayloadSchemaType
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, PayloadSchemaType, Range, ScrollRequest
 from typing import List, Dict, Optional, Tuple
 import uuid
 import numpy as np
+from datetime import datetime, timedelta
 
 class VectorDatabase:
     """Manages vector database operations using Qdrant"""
@@ -72,8 +73,21 @@ class VectorDatabase:
             except Exception as e:
                 # Index might already exist or collection might not support it
                 if "already exists" not in str(e).lower():
-                    print(f"Note: Could not create index for 'trademark_class': {e}")
-                    print("Post-filtering will be used instead")
+                    pass  # Silently ignore
+            
+            # Try to create index for source (used for filtering self_database vs pdf_extraction)
+            try:
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="source",
+                    field_schema=PayloadSchemaType.KEYWORD
+                )
+                print(f"Created index for 'source'")
+            except Exception as e:
+                # Index might already exist
+                if "already exists" not in str(e).lower():
+                    pass  # Silently ignore
+                    
         except Exception as e:
             print(f"Note: Index creation not available or failed: {e}")
             print("Post-filtering will be used for filtering")
@@ -276,3 +290,498 @@ class VectorDatabase:
         self.client.delete_collection(self.collection_name)
         self._create_collection()
         print(f"Collection {self.collection_name} cleared")
+    
+    def get_trademarks_by_date_range(self, start_date: datetime, end_date: datetime, 
+                                      source_filter: Optional[List[str]] = None,
+                                      limit: int = 10000) -> List[Dict]:
+        """
+        Get all trademarks indexed within a date range
+        
+        Args:
+            start_date: Start datetime (inclusive)
+            end_date: End datetime (inclusive)
+            source_filter: Optional list of sources to filter by (e.g., ['pdf_extraction', 'pdf_text_extraction'])
+            limit: Maximum number of results to return
+            
+        Returns:
+            List of trademark dictionaries with id, metadata, and vector
+        """
+        try:
+            # Convert dates to ISO format strings for comparison
+            start_str = start_date.isoformat()
+            end_str = end_date.isoformat()
+            
+            # Scroll through all points and filter by indexed_at
+            all_trademarks = []
+            offset = None
+            
+            while True:
+                # Scroll through points in batches
+                results = self.client.scroll(
+                    collection_name=self.collection_name,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=True
+                )
+                
+                points, next_offset = results
+                
+                for point in points:
+                    if point.payload:
+                        indexed_at = point.payload.get('indexed_at', '')
+                        
+                        # Check if indexed_at is within the date range
+                        if indexed_at and start_str <= indexed_at <= end_str:
+                            # Check source filter if provided
+                            if source_filter:
+                                source = point.payload.get('source', '')
+                                if source not in source_filter:
+                                    continue
+                            
+                            all_trademarks.append({
+                                'trademark_id': point.id,
+                                'metadata': point.payload,
+                                'vector': point.vector
+                            })
+                            
+                            if len(all_trademarks) >= limit:
+                                break
+                
+                if next_offset is None or len(all_trademarks) >= limit:
+                    break
+                    
+                offset = next_offset
+            
+            print(f"Found {len(all_trademarks)} trademarks between {start_str} and {end_str}")
+            return all_trademarks
+            
+        except Exception as e:
+            print(f"Error getting trademarks by date range: {e}")
+            return []
+    
+    def get_trademarks_by_monday(self, monday_date: Optional[datetime] = None,
+                                  include_sources: Optional[List[str]] = None) -> List[Dict]:
+        """
+        Get all trademarks indexed on a specific Monday (journal upload day)
+        
+        Args:
+            monday_date: The Monday date to filter by. If None, uses the most recent Monday.
+            include_sources: Optional list of sources to include (defaults to journal sources)
+            
+        Returns:
+            List of trademark dictionaries
+        """
+        # Calculate Monday date if not provided
+        if monday_date is None:
+            today = datetime.now()
+            # Get the most recent Monday (0 = Monday)
+            days_since_monday = today.weekday()
+            monday_date = today - timedelta(days=days_since_monday)
+        
+        # Set time range for the entire Monday
+        start_of_day = monday_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day = monday_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        # Default sources for journal uploads
+        if include_sources is None:
+            include_sources = ['pdf_extraction', 'pdf_text_extraction']
+        
+        return self.get_trademarks_by_date_range(
+            start_date=start_of_day,
+            end_date=end_of_day,
+            source_filter=include_sources
+        )
+    
+    def get_trademarks_by_journal_monday(self, monday_date: Optional[datetime] = None,
+                                          include_sources: Optional[List[str]] = None,
+                                          limit: int = 10000) -> List[Dict]:
+        """
+        Get all trademarks that belong to a specific journal Monday date.
+        Uses the 'journal_monday_date' metadata field for exact matching.
+        
+        Args:
+            monday_date: The Monday date to filter by. If None, uses the most recent Monday.
+            include_sources: Optional list of sources to include (defaults to journal sources)
+            limit: Maximum number of results to return
+            
+        Returns:
+            List of trademark dictionaries
+        """
+        # Calculate Monday date if not provided
+        if monday_date is None:
+            today = datetime.now()
+            days_since_monday = today.weekday()
+            monday_date = today - timedelta(days=days_since_monday)
+        
+        monday_date = monday_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        monday_str = monday_date.strftime("%Y-%m-%d")
+        
+        # Default sources for journal uploads
+        if include_sources is None:
+            include_sources = ['pdf_extraction', 'pdf_text_extraction']
+        
+        try:
+            all_trademarks = []
+            offset = None
+            
+            while True:
+                results = self.client.scroll(
+                    collection_name=self.collection_name,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=True
+                )
+                
+                points, next_offset = results
+                
+                for point in points:
+                    if point.payload:
+                        # Check journal_monday_date field
+                        journal_monday = point.payload.get('journal_monday_date', '')
+                        
+                        if journal_monday == monday_str:
+                            # Check source filter if provided
+                            if include_sources:
+                                source = point.payload.get('source', '')
+                                if source not in include_sources:
+                                    continue
+                            
+                            all_trademarks.append({
+                                'trademark_id': point.id,
+                                'metadata': point.payload,
+                                'vector': point.vector
+                            })
+                            
+                            if len(all_trademarks) >= limit:
+                                break
+                
+                if next_offset is None or len(all_trademarks) >= limit:
+                    break
+                    
+                offset = next_offset
+            
+            print(f"Found {len(all_trademarks)} trademarks for journal Monday {monday_str}")
+            return all_trademarks
+            
+        except Exception as e:
+            print(f"Error getting trademarks by journal Monday: {e}")
+            return []
+    
+    def get_all_trademarks_paginated(self, batch_size: int = 1000) -> List[Dict]:
+        """
+        Get all trademarks from the collection with pagination
+        
+        Args:
+            batch_size: Number of points to retrieve per batch
+            
+        Returns:
+            List of all trademark dictionaries
+        """
+        try:
+            all_trademarks = []
+            offset = None
+            
+            while True:
+                results = self.client.scroll(
+                    collection_name=self.collection_name,
+                    limit=batch_size,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=True
+                )
+                
+                points, next_offset = results
+                
+                for point in points:
+                    all_trademarks.append({
+                        'trademark_id': point.id,
+                        'metadata': point.payload,
+                        'vector': point.vector if point.vector else None
+                    })
+                
+                if next_offset is None:
+                    break
+                    
+                offset = next_offset
+            
+            print(f"Retrieved {len(all_trademarks)} total trademarks")
+            return all_trademarks
+            
+        except Exception as e:
+            print(f"Error getting all trademarks: {e}")
+            return []
+    
+    def get_points_by_source(self, source: str, limit: int = 100000) -> List[Dict]:
+        """
+        Get all points with a specific source value
+        
+        Args:
+            source: Source value to filter by (e.g., 'self_database', 'pdf_extraction')
+            limit: Maximum number of results
+            
+        Returns:
+            List of point dictionaries with id, metadata, vector
+        """
+        try:
+            all_points = []
+            offset = None
+            
+            while True:
+                results = self.client.scroll(
+                    collection_name=self.collection_name,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=True
+                )
+                
+                points, next_offset = results
+                
+                for point in points:
+                    if point.payload:
+                        point_source = point.payload.get('source', '')
+                        if point_source == source:
+                            all_points.append({
+                                'point_id': point.id,
+                                'metadata': point.payload,
+                                'vector': point.vector
+                            })
+                            
+                            if len(all_points) >= limit:
+                                break
+                
+                if next_offset is None or len(all_points) >= limit:
+                    break
+                    
+                offset = next_offset
+            
+            print(f"Found {len(all_points)} points with source '{source}'")
+            return all_points
+            
+        except Exception as e:
+            print(f"Error getting points by source: {e}")
+            return []
+    
+    def point_exists(self, point_id: str) -> bool:
+        """
+        Check if a point with given ID exists in the collection
+        
+        Args:
+            point_id: The point ID to check
+            
+        Returns:
+            True if exists, False otherwise
+        """
+        try:
+            result = self.client.retrieve(
+                collection_name=self.collection_name,
+                ids=[point_id]
+            )
+            return len(result) > 0
+        except Exception as e:
+            print(f"Error checking point existence: {e}")
+            return False
+    
+    def get_existing_point_ids(self, point_ids: List[str]) -> set:
+        """
+        Check which of the given point IDs already exist in the collection
+        
+        Args:
+            point_ids: List of point IDs to check
+            
+        Returns:
+            Set of existing point IDs
+        """
+        try:
+            # Batch check for efficiency
+            existing = set()
+            batch_size = 100
+            
+            for i in range(0, len(point_ids), batch_size):
+                batch = point_ids[i:i + batch_size]
+                result = self.client.retrieve(
+                    collection_name=self.collection_name,
+                    ids=batch
+                )
+                for point in result:
+                    existing.add(point.id)
+            
+            return existing
+        except Exception as e:
+            print(f"Error checking existing point IDs: {e}")
+            return set()
+    
+    def delete_points_by_ids(self, point_ids: List[str]) -> int:
+        """
+        Delete multiple points by their IDs
+        
+        Args:
+            point_ids: List of point IDs to delete
+            
+        Returns:
+            Number of points deleted
+        """
+        if not point_ids:
+            return 0
+            
+        try:
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=point_ids
+            )
+            print(f"Deleted {len(point_ids)} points")
+            return len(point_ids)
+        except Exception as e:
+            print(f"Error deleting points: {e}")
+            return 0
+    
+    def upsert_point(self, point_id: str, embedding: np.ndarray, metadata: Dict) -> bool:
+        """
+        Insert or update a single point with a specific string ID
+        
+        Args:
+            point_id: String ID for the point (e.g., 'self_12345')
+            embedding: Embedding vector
+            metadata: Point metadata
+            
+        Returns:
+            Success status
+        """
+        try:
+            point = PointStruct(
+                id=point_id,
+                vector=embedding.tolist(),
+                payload=metadata
+            )
+            
+            self.client.upsert(
+                collection_name=self.collection_name,
+                points=[point]
+            )
+            return True
+        except Exception as e:
+            print(f"Error upserting point {point_id}: {e}")
+            return False
+    
+    def upsert_points_batch(self, points: List[Tuple[str, np.ndarray, Dict]]) -> int:
+        """
+        Insert or update multiple points with specific string IDs
+        
+        Args:
+            points: List of (point_id, embedding, metadata) tuples
+            
+        Returns:
+            Number of successfully upserted points
+        """
+        if not points:
+            return 0
+            
+        try:
+            point_structs = []
+            for point_id, embedding, metadata in points:
+                point_structs.append(PointStruct(
+                    id=point_id,
+                    vector=embedding.tolist(),
+                    payload=metadata
+                ))
+            
+            self.client.upsert(
+                collection_name=self.collection_name,
+                points=point_structs
+            )
+            return len(point_structs)
+        except Exception as e:
+            print(f"Error upserting batch: {e}")
+            return 0
+    
+    def search_similar_by_source(self, query_embedding: np.ndarray, source: str,
+                                  top_k: int = 10, score_threshold: Optional[float] = None) -> List[Dict]:
+        """
+        Search for similar vectors filtered by source
+        
+        Args:
+            query_embedding: Query embedding vector
+            source: Source to filter by (e.g., 'self_database')
+            top_k: Number of results to return
+            score_threshold: Minimum similarity score
+            
+        Returns:
+            List of similar points with scores
+        """
+        try:
+            # Build filter for source
+            query_filter = Filter(
+                must=[
+                    FieldCondition(key="source", match=MatchValue(value=source))
+                ]
+            )
+            
+            query_params = {
+                "collection_name": self.collection_name,
+                "query": query_embedding.tolist(),
+                "limit": top_k,
+                "with_payload": True,
+                "with_vectors": False,
+                "query_filter": query_filter
+            }
+            
+            if score_threshold is not None:
+                query_params["score_threshold"] = score_threshold
+            
+            results = self.client.query_points(**query_params)
+            
+            formatted_results = []
+            for result in results.points:
+                similarity_score = max(0.0, min(1.0, float(result.score)))
+                formatted_results.append({
+                    'point_id': result.id,
+                    'similarity_score': similarity_score,
+                    'metadata': result.payload
+                })
+            
+            return formatted_results
+            
+        except Exception as e:
+            print(f"Error searching similar by source: {e}")
+            # Fallback to post-filtering
+            return self._search_similar_by_source_fallback(
+                query_embedding, source, top_k, score_threshold
+            )
+    
+    def _search_similar_by_source_fallback(self, query_embedding: np.ndarray, source: str,
+                                            top_k: int, score_threshold: Optional[float]) -> List[Dict]:
+        """Fallback method using post-filtering when Qdrant filter fails"""
+        try:
+            query_params = {
+                "collection_name": self.collection_name,
+                "query": query_embedding.tolist(),
+                "limit": top_k * 5,  # Get more to allow for filtering
+                "with_payload": True,
+                "with_vectors": False
+            }
+            
+            if score_threshold is not None:
+                query_params["score_threshold"] = score_threshold
+            
+            results = self.client.query_points(**query_params)
+            
+            formatted_results = []
+            for result in results.points:
+                if result.payload and result.payload.get('source') == source:
+                    similarity_score = max(0.0, min(1.0, float(result.score)))
+                    formatted_results.append({
+                        'point_id': result.id,
+                        'similarity_score': similarity_score,
+                        'metadata': result.payload
+                    })
+                    
+                    if len(formatted_results) >= top_k:
+                        break
+            
+            return formatted_results
+            
+        except Exception as e:
+            print(f"Error in fallback search: {e}")
+            return []

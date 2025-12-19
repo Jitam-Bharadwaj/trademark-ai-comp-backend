@@ -65,6 +65,10 @@ class Config:
     ENABLE_MONITORING = os.getenv("ENABLE_MONITORING", "true").lower() == "true"
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     
+    # Report Generation
+    REPORT_OUTPUT_PATH = Path(os.getenv("REPORT_OUTPUT_PATH", "./data/reports"))
+    REPORT_RETENTION_DAYS = int(os.getenv("REPORT_RETENTION_DAYS", "30"))
+    
     # Database Configuration
     DATABASE_USERNAME = os.getenv("DATABASE_USERNAME", "root")
     DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD", "")
@@ -80,3 +84,4 @@ class Config:
         cls.EXTRACTED_IMAGES_PATH.mkdir(parents=True, exist_ok=True)
         cls.UPLOAD_PATH.mkdir(parents=True, exist_ok=True)
         cls.LOG_PATH.mkdir(parents=True, exist_ok=True)
+        cls.REPORT_OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
