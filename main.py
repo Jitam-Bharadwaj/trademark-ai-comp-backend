@@ -23,6 +23,9 @@ from utils.ocr_extractor import OCRTextExtractor
 from utils.text_similarity import TextSimilarity
 from database.application_queries import application_queries
 from PIL.PngImagePlugin import PngImageFile
+from reporting.report_generator import ReportGenerator
+from reporting.pdf_builder import PDFReportBuilder
+from reporting.report_models import WeeklyReport, ReportSummary
 
 # Increase the MAX_TEXT_CHUNK limit (default is ~1MB, increase to 10MB)
 Image.MAX_TEXT_CHUNK = 10 * 1024 * 1024  # 10MB
@@ -56,6 +59,10 @@ app = FastAPI(
         {
             "name": "Debug & Testing",
             "description": "Debug endpoints for testing and troubleshooting",
+        },
+        {
+            "name": "Reports",
+            "description": "Weekly similarity report generation and retrieval",
         }
     ]
 )
@@ -98,6 +105,8 @@ vector_db = None
 pdf_extractor = None
 ocr_extractor = None
 text_similarity = None
+report_generator = None
+pdf_report_builder = None
 logger = None
 
 # Pydantic models
@@ -165,7 +174,7 @@ class PDFBatchResult(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     """Initialize components on startup"""
-    global preprocessor, embedding_generator, vector_db, pdf_extractor, ocr_extractor, text_similarity, logger
+    global preprocessor, embedding_generator, vector_db, pdf_extractor, ocr_extractor, text_similarity, report_generator, pdf_report_builder, logger
     
     # Create directories
     Config.create_directories()
@@ -258,6 +267,17 @@ async def startup_event():
         logger.error(f"Failed to connect to vector database: {e}")
         logger.warning("API will start without database connection. Some endpoints may not work.")
         vector_db = None
+    
+    # Initialize report generator and PDF builder
+    if vector_db is not None and text_similarity is not None:
+        logger.info("Initializing report generator...")
+        report_generator = ReportGenerator(vector_db=vector_db, text_similarity=text_similarity)
+        pdf_report_builder = PDFReportBuilder()
+        logger.info("Report generator initialized successfully")
+    else:
+        logger.warning("Report generator not initialized (requires vector_db and text_similarity)")
+        report_generator = None
+        pdf_report_builder = None
     
     logger.info("API startup complete")
 
@@ -1577,7 +1597,8 @@ async def index_extracted_images(
 async def process_pdf_and_index(
     file: UploadFile = File(...),
     save_images: bool = True,
-    auto_index: bool = True
+    auto_index: bool = True,
+    journal_monday_date: Optional[str] = None
 ):
     """
     Extract trademarks from PDF and optionally index them into the vector database
@@ -1586,6 +1607,8 @@ async def process_pdf_and_index(
         file: Uploaded PDF file
         save_images: Whether to save extracted images to disk
         auto_index: Whether to automatically index extracted images
+        journal_monday_date: The Monday date for this journal (YYYY-MM-DD format). 
+                            Used for report generation filtering.
         
     Returns:
         Combined extraction and indexing results
@@ -1597,7 +1620,27 @@ async def process_pdf_and_index(
         raise HTTPException(status_code=503, detail="Vector database not available. Please ensure Qdrant is running.")
     
     import time
+    from datetime import timedelta
     start_time = time.time()
+    
+    # Parse and validate journal_monday_date if provided
+    parsed_monday_date = None
+    if journal_monday_date:
+        try:
+            parsed_monday_date = datetime.strptime(journal_monday_date, "%Y-%m-%d")
+            logger.info(f"Processing journal for Monday: {journal_monday_date}")
+        except ValueError:
+            logger.warning(f"Invalid journal_monday_date format: {journal_monday_date}. Expected YYYY-MM-DD.")
+    
+    # If no monday date provided, calculate the current week's Monday
+    if parsed_monday_date is None:
+        today = datetime.now()
+        days_since_monday = today.weekday()
+        parsed_monday_date = today - timedelta(days=days_since_monday)
+        parsed_monday_date = parsed_monday_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        logger.info(f"Using calculated Monday date: {parsed_monday_date.strftime('%Y-%m-%d')}")
+    
+    journal_monday_str = parsed_monday_date.strftime("%Y-%m-%d")
     
     try:
         # Extract images directly (bypass the separate endpoint)
@@ -1736,6 +1779,7 @@ async def process_pdf_and_index(
                             'owner': metadata.get('applicant_name', ''),  # Use applicant_name as owner if available
                             'image_path': str(image_path) if image_path else 'in_memory',
                             'indexed_at': datetime.now().isoformat(),
+                            'journal_monday_date': journal_monday_str,  # Monday date for report filtering
                             'source': 'pdf_extraction',
                             'pdf_source': file.filename,
                             'page': metadata.get('page', 1),
@@ -1808,6 +1852,7 @@ async def process_pdf_and_index(
                             'owner': tm_metadata.get('applicant_name', ''),
                             'image_path': '',  # No image for text-only trademarks
                             'indexed_at': datetime.now().isoformat(),
+                            'journal_monday_date': journal_monday_str,  # Monday date for report filtering
                             'source': 'pdf_text_extraction',
                             'pdf_source': file.filename,
                             'page': tm_metadata.get('page', 1),
@@ -2113,3 +2158,266 @@ async def debug_similarity_search(
     except Exception as e:
         logger.error(f"Debug similarity error: {e}")
         raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+
+# ==================== Report Generation Endpoints ====================
+
+class ReportGenerationRequest(BaseModel):
+    monday_date: Optional[str] = Field(None, description="Monday date in YYYY-MM-DD format. If not provided, uses most recent Monday.")
+
+class ReportInfo(BaseModel):
+    report_id: str
+    monday_date: str
+    report_date: str
+    total_journal_trademarks: int
+    trademarks_with_similarities: int
+    total_similarities_found: int
+    pdf_filename: str
+    pdf_path: str
+
+class ReportListResponse(BaseModel):
+    total_reports: int
+    reports: List[ReportInfo]
+
+
+@app.post("/generate-weekly-report", tags=["Reports"])
+async def generate_weekly_report(request: Optional[ReportGenerationRequest] = None):
+    """
+    Generate a weekly similarity report comparing journal trademarks (uploaded on Monday)
+    against the self database.
+    
+    Args:
+        request: Optional request body with monday_date (YYYY-MM-DD format)
+        
+    Returns:
+        Report generation result with PDF file path
+    """
+    if report_generator is None or pdf_report_builder is None:
+        raise HTTPException(
+            status_code=503, 
+            detail="Report generator not available. Please ensure vector database and text similarity are initialized."
+        )
+    
+    import time
+    start_time = time.time()
+    
+    try:
+        # Parse monday_date if provided
+        monday_date = None
+        if request and request.monday_date:
+            try:
+                monday_date = datetime.strptime(request.monday_date, "%Y-%m-%d")
+                # Validate it's a Monday
+                if monday_date.weekday() != 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"The date {request.monday_date} is not a Monday. Please provide a Monday date."
+                    )
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid date format. Please use YYYY-MM-DD format."
+                )
+        
+        logger.info(f"Generating weekly report for Monday: {monday_date or 'most recent'}")
+        
+        # Generate the report
+        report = report_generator.generate_weekly_report(monday_date=monday_date)
+        
+        # Build PDF
+        pdf_path = pdf_report_builder.build_report(report)
+        
+        total_time = time.time() - start_time
+        
+        logger.info(f"Report generated successfully: {report.report_id} in {total_time:.2f}s")
+        
+        return {
+            "status": "success",
+            "report_id": report.report_id,
+            "monday_date": report.monday_date.strftime("%Y-%m-%d"),
+            "report_date": report.report_date.strftime("%Y-%m-%d %H:%M:%S"),
+            "summary": {
+                "total_journal_trademarks": report.summary.total_journal_trademarks,
+                "total_image_based": report.summary.total_image_based,
+                "total_text_only": report.summary.total_text_only,
+                "total_self_db_trademarks": report.summary.total_self_db_trademarks,
+                "total_similarities_found": report.summary.total_similarities_found,
+                "trademarks_with_similarities": report.summary.trademarks_with_similarities,
+                "average_similarity_score": report.summary.average_similarity_score,
+                "highest_similarity_score": report.summary.highest_similarity_score,
+                "similarity_threshold_used": report.summary.similarity_threshold_used
+            },
+            "pdf_filename": pdf_path.name,
+            "pdf_path": str(pdf_path),
+            "processing_time_seconds": round(total_time, 2)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Report generation error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+
+
+@app.get("/reports/{report_id}", tags=["Reports"])
+async def get_report(report_id: str):
+    """
+    Get a specific report PDF by report ID
+    
+    Args:
+        report_id: The report ID (e.g., report_20250120_abc12345)
+        
+    Returns:
+        PDF file
+    """
+    try:
+        # Check both possible report paths
+        report_paths = [
+            Path("data/reports"),
+            Path("scripts/data/reports"),
+            Config.REPORT_OUTPUT_PATH  # Also check configured path
+        ]
+        
+        pdf_path = None
+        for reports_dir in report_paths:
+            candidate_path = reports_dir / f"{report_id}.pdf"
+            if candidate_path.exists():
+                pdf_path = candidate_path
+                break
+        
+        if pdf_path is None:
+            raise HTTPException(status_code=404, detail=f"Report not found: {report_id}")
+        
+        return FileResponse(
+            path=str(pdf_path),
+            media_type="application/pdf",
+            filename=f"{report_id}.pdf"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving report {report_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving report: {str(e)}")
+
+
+@app.get("/reports", response_model=ReportListResponse, tags=["Reports"])
+async def list_reports():
+    """
+    List all available reports
+    
+    Returns:
+        List of report information
+    """
+    try:
+        # Check both possible report paths
+        report_paths = [
+            Path("data/reports"),
+            Path("scripts/data/reports"),
+            Config.REPORT_OUTPUT_PATH  # Also check configured path
+        ]
+        
+        # Collect all PDF files from all paths (avoid duplicates)
+        pdf_files_dict = {}  # Use dict to track by report_id to avoid duplicates
+        
+        for reports_dir in report_paths:
+            if not reports_dir.exists():
+                continue
+            
+            # Find all PDF files in this reports directory
+            pdf_files = list(reports_dir.glob("report_*.pdf"))
+            
+            for pdf_path in pdf_files:
+                report_id = pdf_path.stem
+                # Only add if we haven't seen this report_id before (prefer first found)
+                if report_id not in pdf_files_dict:
+                    pdf_files_dict[report_id] = pdf_path
+        
+        if not pdf_files_dict:
+            return ReportListResponse(total_reports=0, reports=[])
+        
+        reports = []
+        # Sort by modification time (most recent first)
+        sorted_pdfs = sorted(pdf_files_dict.values(), 
+                            key=lambda p: p.stat().st_mtime, 
+                            reverse=True)
+        
+        for pdf_path in sorted_pdfs:
+            # Parse report ID from filename
+            report_id = pdf_path.stem
+            
+            # Extract monday date from report ID (format: report_YYYYMMDD_xxxxxxxx)
+            parts = report_id.split('_')
+            if len(parts) >= 2:
+                try:
+                    monday_date_str = parts[1]
+                    monday_date = datetime.strptime(monday_date_str, "%Y%m%d")
+                except (ValueError, IndexError):
+                    monday_date = None
+            else:
+                monday_date = None
+            
+            # Get file modification time as report date
+            file_stat = pdf_path.stat()
+            report_date = datetime.fromtimestamp(file_stat.st_mtime)
+            
+            reports.append(ReportInfo(
+                report_id=report_id,
+                monday_date=monday_date.strftime("%Y-%m-%d") if monday_date else "Unknown",
+                report_date=report_date.strftime("%Y-%m-%d %H:%M:%S"),
+                total_journal_trademarks=0,  # Would need to read from report
+                trademarks_with_similarities=0,
+                total_similarities_found=0,
+                pdf_filename=pdf_path.name,
+                pdf_path=str(pdf_path)
+            ))
+        
+        return ReportListResponse(
+            total_reports=len(reports),
+            reports=reports
+        )
+        
+    except Exception as e:
+        logger.error(f"Error listing reports: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing reports: {str(e)}")
+
+
+@app.delete("/reports/{report_id}", tags=["Reports"])
+async def delete_report(report_id: str):
+    """
+    Delete a specific report
+    
+    Args:
+        report_id: The report ID to delete
+        
+    Returns:
+        Deletion confirmation
+    """
+    try:
+        # Check both possible report paths
+        report_paths = [
+            Path("data/reports"),
+            Path("scripts/data/reports"),
+            Config.REPORT_OUTPUT_PATH  # Also check configured path
+        ]
+        
+        pdf_path = None
+        for reports_dir in report_paths:
+            candidate_path = reports_dir / f"{report_id}.pdf"
+            if candidate_path.exists():
+                pdf_path = candidate_path
+                break
+        
+        if pdf_path is None:
+            raise HTTPException(status_code=404, detail=f"Report not found: {report_id}")
+        
+        pdf_path.unlink()
+        logger.info(f"Deleted report: {report_id} from {pdf_path}")
+        
+        return {"status": "success", "message": f"Report {report_id} deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting report {report_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deleting report: {str(e)}")

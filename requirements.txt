@@ -30,3 +30,5 @@ fuzzywuzzy
 phonetics
 # Optional: EasyOCR (alternative to Tesseract, no system dependencies needed)
 # easyocr
+# PDF Report Generation
+reportlab
