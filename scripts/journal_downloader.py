@@ -3,6 +3,7 @@ import sys
 import time
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -23,6 +24,8 @@ from database.vector_db import VectorDatabase
 # Tracking file for processed Mondays (backup in case DB check fails)
 PROCESSED_MONDAYS_FILE = Path(os.getenv("PROCESSED_MONDAYS_FILE", "./data/journal_downloads/.processed_mondays.txt"))
 
+# Timezone configuration - Use IST (Indian Standard Time)
+IST = ZoneInfo("Asia/Kolkata")
 
 # Configuration (override via env vars)
 BASE_URL = os.getenv("JOURNAL_BASE_URL", "https://search.ipindia.gov.in/IPOJournal/Journal/Trademark")
@@ -50,9 +53,13 @@ HEADERS = {
 # Ensure log directory exists before logger creation
 Config.LOG_PATH.mkdir(parents=True, exist_ok=True)
 
+def get_ist_now() -> datetime:
+    """Get current datetime in IST timezone"""
+    return datetime.now(IST)
+
 logger: logging.Logger = setup_logger(
     "journal_downloader",
-    Config.LOG_PATH / f"journal_downloader_{datetime.now().strftime('%Y%m%d')}.log",
+    Config.LOG_PATH / f"journal_downloader_{get_ist_now().strftime('%Y%m%d')}.log",
     level=getattr(logging, Config.LOG_LEVEL),
 )
 
@@ -204,11 +211,11 @@ def run_cycle(force_monday: Optional[datetime] = None):
         return
 
     # Get the Monday date for this processing cycle
-    now = datetime.now()
+    now = get_ist_now()
     processing_monday = force_monday if force_monday else get_current_monday(now)
     
     logger.info("--- Journal task started ---")
-    logger.info("Current time: %s", now.strftime("%Y-%m-%d %H:%M:%S (%A)"))
+    logger.info("Current time (IST): %s", now.strftime("%Y-%m-%d %H:%M:%S (%A)"))
     logger.info("Processing for Monday: %s", processing_monday.strftime("%Y-%m-%d"))
     
     # Check if this Monday has already been processed
@@ -288,19 +295,22 @@ def _release_lock(lock_fd):
 
 def get_next_monday(from_date: Optional[datetime] = None) -> datetime:
     """
-    Calculate the next Monday from the given date.
+    Calculate the next Monday from the given date in IST timezone.
     If from_date is already Monday, returns the following Monday.
     
     Args:
-        from_date: Starting date. If None, uses current datetime.
+        from_date: Starting date in IST. If None, uses current IST datetime.
         
     Returns:
-        datetime of next Monday at the scheduled time
+        datetime of next Monday at the scheduled time in IST
     """
     if from_date is None:
-        from_date = datetime.now()
+        from_date = get_ist_now()
+    elif from_date.tzinfo is None:
+        # If naive datetime, assume it's in IST
+        from_date = from_date.replace(tzinfo=IST)
     
-    # Parse scheduled time
+    # Parse scheduled time (IST)
     schedule_hour, schedule_minute = map(int, SCHEDULE_TIME.split(':'))
     
     # Get days until next Monday (0 = Monday)
@@ -318,18 +328,48 @@ def get_next_monday(from_date: Optional[datetime] = None) -> datetime:
     return next_monday
 
 
-def get_current_monday(from_date: Optional[datetime] = None) -> datetime:
+def get_local_time_for_ist_schedule(ist_time_str: str) -> str:
     """
-    Get the most recent Monday (including today if Monday).
+    Convert IST time string to local system time for schedule library.
+    The schedule library uses system local time, so we need to convert IST to local.
     
     Args:
-        from_date: Reference date. If None, uses current datetime.
+        ist_time_str: Time string in HH:MM format (IST timezone)
         
     Returns:
-        datetime of the most recent Monday at 00:00:00
+        Time string in HH:MM format (local system timezone)
+    """
+    # Parse IST time
+    hour, minute = map(int, ist_time_str.split(':'))
+    
+    # Get current date in IST
+    ist_now = get_ist_now()
+    
+    # Create a datetime in IST with the scheduled time (today)
+    ist_datetime = ist_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    
+    # Convert to local system time
+    local_datetime = ist_datetime.astimezone()
+    
+    # Return as HH:MM string
+    return local_datetime.strftime("%H:%M")
+
+
+def get_current_monday(from_date: Optional[datetime] = None) -> datetime:
+    """
+    Get the most recent Monday (including today if Monday) in IST timezone.
+    
+    Args:
+        from_date: Reference date in IST. If None, uses current IST datetime.
+        
+    Returns:
+        datetime of the most recent Monday at 00:00:00 IST
     """
     if from_date is None:
-        from_date = datetime.now()
+        from_date = get_ist_now()
+    elif from_date.tzinfo is None:
+        # If naive datetime, assume it's in IST
+        from_date = from_date.replace(tzinfo=IST)
     
     days_since_monday = from_date.weekday()  # 0 = Monday
     current_monday = from_date - timedelta(days=days_since_monday)
@@ -339,16 +379,16 @@ def get_current_monday(from_date: Optional[datetime] = None) -> datetime:
 
 
 def log_schedule_status():
-    """Log the current schedule status with actual dates."""
-    now = datetime.now()
+    """Log the current schedule status with actual dates in IST."""
+    now = get_ist_now()
     current_monday = get_current_monday(now)
     next_monday = get_next_monday(now)
     
     logger.info("=" * 50)
-    logger.info("Schedule Status:")
+    logger.info("Schedule Status (IST):")
     logger.info("  Current time: %s", now.strftime("%Y-%m-%d %H:%M:%S (%A)"))
     logger.info("  This week's Monday: %s", current_monday.strftime("%Y-%m-%d"))
-    logger.info("  Next scheduled run: %s", next_monday.strftime("%Y-%m-%d %H:%M:%S (%A)"))
+    logger.info("  Next scheduled run (IST): %s", next_monday.strftime("%Y-%m-%d %H:%M:%S (%A)"))
     
     # Calculate time until next run
     time_until = next_monday - now
@@ -469,12 +509,12 @@ def main():
     logger.info("=" * 60)
     logger.info("Process endpoint: %s", PROCESS_ENDPOINT)
     logger.info("Download directory: %s", DOWNLOAD_DIR)
-    logger.info("Scheduled time: %s (every Monday)", SCHEDULE_TIME)
+    logger.info("Scheduled time (IST): %s (every Monday)", SCHEDULE_TIME)
     
     # Log current schedule status
     log_schedule_status()
     
-    now = datetime.now()
+    now = get_ist_now()
     current_monday = get_current_monday(now)
     
     logger.info("Current week's Monday: %s", current_monday.strftime("%Y-%m-%d"))
@@ -489,22 +529,24 @@ def main():
         logger.info("Processing current Monday's journal now...")
         run_cycle(force_monday=current_monday)
 
-    # Schedule for Mondays at configured time - will process automatically
-    schedule.every().monday.at(SCHEDULE_TIME).do(run_cycle_with_logging)
+    # Schedule for Mondays at configured time (IST) - convert to local time for schedule library
+    local_schedule_time = get_local_time_for_ist_schedule(SCHEDULE_TIME)
+    logger.info("IST schedule time: %s, Local schedule time: %s", SCHEDULE_TIME, local_schedule_time)
+    schedule.every().monday.at(local_schedule_time).do(run_cycle_with_logging)
     
     # Log next scheduled run
     next_monday = get_next_monday(now)
-    logger.info("Next scheduled run: %s", next_monday.strftime("%Y-%m-%d %H:%M:%S (%A)"))
+    logger.info("Next scheduled run (IST): %s", next_monday.strftime("%Y-%m-%d %H:%M:%S (%A)"))
 
     # Keep running and periodically log status
-    last_status_log = datetime.now()
+    last_status_log = get_ist_now()
     while True:
         schedule.run_pending()
         
         # Log schedule status every 6 hours
-        if (datetime.now() - last_status_log).total_seconds() > 6 * 3600:
+        if (get_ist_now() - last_status_log).total_seconds() > 6 * 3600:
             log_schedule_status()
-            last_status_log = datetime.now()
+            last_status_log = get_ist_now()
         
         time.sleep(30)
 
@@ -517,12 +559,12 @@ def run_cycle_with_logging():
     Processes immediately without delay - the run_cycle function will
     check if already processed and skip if needed.
     """
-    now = datetime.now()
+    now = get_ist_now()
     current_monday = get_current_monday(now)
     
     logger.info("=" * 60)
     logger.info("SCHEDULED RUN TRIGGERED")
-    logger.info("Time: %s", now.strftime("%Y-%m-%d %H:%M:%S (%A)"))
+    logger.info("Time (IST): %s", now.strftime("%Y-%m-%d %H:%M:%S (%A)"))
     logger.info("Processing Monday: %s", current_monday.strftime("%Y-%m-%d"))
     logger.info("=" * 60)
     
@@ -530,8 +572,8 @@ def run_cycle_with_logging():
     run_cycle()
     
     # Log next scheduled run after completion
-    next_monday = get_next_monday(datetime.now())
-    logger.info("Run completed. Next scheduled run: %s", next_monday.strftime("%Y-%m-%d %H:%M:%S (%A)"))
+    next_monday = get_next_monday(get_ist_now())
+    logger.info("Run completed. Next scheduled run: %s (IST)", next_monday.strftime("%Y-%m-%d %H:%M:%S (%A)"))
 
 
 if __name__ == "__main__":
