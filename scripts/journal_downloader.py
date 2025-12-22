@@ -31,7 +31,7 @@ IST = ZoneInfo("Asia/Kolkata")
 BASE_URL = os.getenv("JOURNAL_BASE_URL", "https://search.ipindia.gov.in/IPOJournal/Journal/Trademark")
 DOWNLOAD_DIR = Path(os.getenv("JOURNAL_DOWNLOAD_DIR", "./data/journal_downloads"))
 MAX_WORKERS = int(os.getenv("JOURNAL_MAX_WORKERS", "4"))  # Reserved for future parallelism
-SCHEDULE_TIME = os.getenv("JOURNAL_SCHEDULE_TIME", "10:30")  # 24h format
+SCHEDULE_TIME = os.getenv("JOURNAL_SCHEDULE_TIME", "17:00")  # 24h format
 PROCESS_ENDPOINT = os.getenv(
     "PROCESS_PDF_ENDPOINT",
     f"http://{Config.API_HOST}:{Config.API_PORT}/process-pdf-and-index"
@@ -40,7 +40,7 @@ VERIFY_SSL = os.getenv("JOURNAL_VERIFY_SSL", "false").lower() == "true"
 REQUEST_TIMEOUT = int(os.getenv("JOURNAL_REQUEST_TIMEOUT_SECONDS", "60"))
 # Processing can take 7–14 minutes; allow a higher timeout for the API call
 PROCESS_TIMEOUT = int(os.getenv("JOURNAL_PROCESS_TIMEOUT_SECONDS", "1200"))
-PROCESSING_PAUSE_SECONDS = int(os.getenv("JOURNAL_PROCESSING_PAUSE_SECONDS", "10"))
+PROCESSING_PAUSE_SECONDS = int(os.getenv("JOURNAL_PROCESSING_PAUSE_SECONDS", "30"))
 LOCK_FILE = Path(os.getenv("JOURNAL_LOCK_FILE", DOWNLOAD_DIR / ".journal_downloader.lock"))
 
 HEADERS = {
