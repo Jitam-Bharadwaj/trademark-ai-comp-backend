@@ -21,6 +21,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
 from config import Config
 from reporting.report_models import WeeklyReport, JournalTrademarkEntry, SimilarTrademark
+from reporting.report_generator import classes_match
 
 logger = logging.getLogger(__name__)
 
@@ -414,7 +415,8 @@ class PDFReportBuilder:
             # Same-class matches get priority highlighting
             journal_class = entry.trademark_class or ''
             for row_idx, sim in enumerate(filtered_similar, 1):
-                is_same_class = sim.trademark_class == journal_class and journal_class != ''
+                # Use classes_match() to handle different class formats (e.g., "5" vs "Class 5")
+                is_same_class = classes_match(sim.trademark_class, journal_class)
                 
                 if is_same_class:
                     # Same class matches: use distinct highlighting
@@ -630,7 +632,8 @@ class PDFReportBuilder:
         
         # Class match information
         if entry.trademark_class and sim.trademark_class:
-            if entry.trademark_class == sim.trademark_class:
+            # Use classes_match() to handle different class formats (e.g., "5" vs "Class 5")
+            if classes_match(entry.trademark_class, sim.trademark_class):
                 desc_parts.append(f"<i>Both marks are in Class {sim.trademark_class} (same class - higher conflict risk)</i>")
             else:
                 desc_parts.append(f"<i>Self DB mark is in Class {sim.trademark_class}</i>")

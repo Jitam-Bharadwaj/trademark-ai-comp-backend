@@ -11,10 +11,11 @@ Uses CLIP cross-modal similarity:
 """
 
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Set
 import numpy as np
 
 from config import Config
@@ -32,6 +33,52 @@ logger = logging.getLogger(__name__)
 
 # Source identifier for self database marks in Qdrant
 SELF_DB_SOURCE = "self_database"
+
+
+def extract_class_numbers(class_str: str) -> Set[str]:
+    """
+    Extract class numbers from a trademark class string.
+    
+    Handles various formats:
+    - "5" -> {"5"}
+    - "Class 5" -> {"5"}
+    - "Class 5, Class 29" -> {"5", "29"}
+    - "5, 29" -> {"5", "29"}
+    - "Class 5, 29" -> {"5", "29"}
+    
+    Args:
+        class_str: Class string in any format
+        
+    Returns:
+        Set of class numbers as strings
+    """
+    if not class_str:
+        return set()
+    
+    # Find all numbers in the string
+    numbers = re.findall(r'\d+', class_str)
+    return set(numbers)
+
+
+def classes_match(class1: str, class2: str) -> bool:
+    """
+    Check if two trademark class strings have any matching classes.
+    
+    Args:
+        class1: First class string (e.g., "5" or "Class 5")
+        class2: Second class string (e.g., "Class 5" or "5, 29")
+        
+    Returns:
+        True if any class numbers match, False otherwise
+    """
+    if not class1 or not class2:
+        return False
+    
+    nums1 = extract_class_numbers(class1)
+    nums2 = extract_class_numbers(class2)
+    
+    # Check for intersection
+    return bool(nums1 & nums2)
 
 
 class ReportGenerator:
@@ -343,7 +390,8 @@ class ReportGenerator:
         
         # Sort by: 1) Class match (same class first), 2) Similarity score (descending)
         # This prioritizes trademarks from the same class as the journal trademark
-        similar.sort(key=lambda x: (x.trademark_class == journal_class, x.similarity_score), reverse=True)
+        # Use classes_match() to handle different class formats (e.g., "5" vs "Class 5")
+        similar.sort(key=lambda x: (classes_match(x.trademark_class, journal_class), x.similarity_score), reverse=True)
         
         # Limit to top 10 similar trademarks
         return similar[:10]
@@ -399,7 +447,8 @@ class ReportGenerator:
         
         # Sort by: 1) Class match (same class first), 2) Similarity score (descending)
         # This prioritizes trademarks from the same class as the journal trademark
-        similar.sort(key=lambda x: (x.trademark_class == journal_class, x.similarity_score), reverse=True)
+        # Use classes_match() to handle different class formats (e.g., "5" vs "Class 5")
+        similar.sort(key=lambda x: (classes_match(x.trademark_class, journal_class), x.similarity_score), reverse=True)
         
         # Limit to top 10 similar trademarks
         return similar[:10]
