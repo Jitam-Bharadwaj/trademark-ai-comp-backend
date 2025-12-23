@@ -410,14 +410,31 @@ class PDFReportBuilder:
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
             ]
             
-            # Highlight high similarity rows
+            # Highlight rows based on class match and similarity score
+            # Same-class matches get priority highlighting
+            journal_class = entry.trademark_class or ''
             for row_idx, sim in enumerate(filtered_similar, 1):
-                if sim.similarity_score >= 0.8:
-                    table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#fed7d7')))
-                elif sim.similarity_score >= 0.7:
-                    table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#feebc8')))
+                is_same_class = sim.trademark_class == journal_class and journal_class != ''
+                
+                if is_same_class:
+                    # Same class matches: use distinct highlighting
+                    if sim.similarity_score >= 0.8:
+                        # High similarity + same class: strong red highlight
+                        table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#fed7d7')))
+                    elif sim.similarity_score >= 0.7:
+                        # Medium similarity + same class: orange highlight
+                        table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#feebc8')))
+                    else:
+                        # Lower similarity + same class: light green highlight to indicate class match
+                        table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#c6f6d5')))
                 else:
-                    table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.white))
+                    # Different class: standard highlighting based on score only
+                    if sim.similarity_score >= 0.8:
+                        table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#fed7d7')))
+                    elif sim.similarity_score >= 0.7:
+                        table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#feebc8')))
+                    else:
+                        table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.white))
             
             sim_table.setStyle(TableStyle(table_style))
             elements.append(sim_table)

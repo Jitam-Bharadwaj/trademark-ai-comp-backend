@@ -268,6 +268,7 @@ class ReportGenerator:
         metadata = journal_tm.get('metadata', {})
         journal_vector = journal_tm.get('vector')
         journal_mark = metadata.get('mark', '') or metadata.get('name', '')
+        journal_class = metadata.get('trademark_class', '')
         
         if journal_vector is None:
             logger.warning("No vector found for journal trademark, falling back to text similarity")
@@ -340,8 +341,9 @@ class ReportGenerator:
             logger.debug("No vector matches found, falling back to text similarity")
             similar = self._find_similar_by_text(journal_tm, self_db_trademarks)
         
-        # Sort by similarity score (descending)
-        similar.sort(key=lambda x: x.similarity_score, reverse=True)
+        # Sort by: 1) Class match (same class first), 2) Similarity score (descending)
+        # This prioritizes trademarks from the same class as the journal trademark
+        similar.sort(key=lambda x: (x.trademark_class == journal_class, x.similarity_score), reverse=True)
         
         # Limit to top 10 similar trademarks
         return similar[:10]
@@ -362,6 +364,7 @@ class ReportGenerator:
         similar = []
         metadata = journal_tm.get('metadata', {})
         journal_mark = metadata.get('mark', '') or metadata.get('name', '')
+        journal_class = metadata.get('trademark_class', '')
         
         if not journal_mark:
             return similar
@@ -394,8 +397,9 @@ class ReportGenerator:
                     application_no=self_tm.get('application_no', '')
                 ))
         
-        # Sort by similarity score (descending)
-        similar.sort(key=lambda x: x.similarity_score, reverse=True)
+        # Sort by: 1) Class match (same class first), 2) Similarity score (descending)
+        # This prioritizes trademarks from the same class as the journal trademark
+        similar.sort(key=lambda x: (x.trademark_class == journal_class, x.similarity_score), reverse=True)
         
         # Limit to top 10 similar trademarks
         return similar[:10]
