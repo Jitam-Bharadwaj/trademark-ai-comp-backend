@@ -1,10 +1,12 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from urllib.parse import unquote
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import io
+import json
 import logging
 import re
 from datetime import datetime
@@ -26,6 +28,16 @@ from PIL.PngImagePlugin import PngImageFile
 from reporting.report_generator import ReportGenerator
 from reporting.pdf_builder import PDFReportBuilder
 from reporting.report_models import WeeklyReport, ReportSummary
+
+# Import self-database sync function
+# Handle both cases: running as module or as script
+try:
+    from scripts.index_self_db import sync_self_db_to_qdrant
+except ImportError:
+    try:
+        from index_self_db import sync_self_db_to_qdrant
+    except ImportError:
+        sync_self_db_to_qdrant = None
 
 # Increase the MAX_TEXT_CHUNK limit (default is ~1MB, increase to 10MB)
 Image.MAX_TEXT_CHUNK = 10 * 1024 * 1024  # 10MB
@@ -2221,10 +2233,30 @@ async def generate_weekly_report(request: Optional[ReportGenerationRequest] = No
         
         logger.info(f"Generating weekly report for Monday: {monday_date or 'most recent'}")
         
-        # Generate the report
+        # STEP 1: Sync self-database to Qdrant before generating report
+        # This ensures self-database marks are up-to-date with CLIP text embeddings
+        # for cross-modal similarity comparison with journal image trademarks
+        if sync_self_db_to_qdrant is not None and embedding_generator is not None and vector_db is not None:
+            logger.info("Syncing self-database trademarks to Qdrant...")
+            try:
+                sync_stats = sync_self_db_to_qdrant(
+                    vector_db=vector_db,
+                    embedding_generator=embedding_generator,
+                    force=False,  # Incremental sync (add new, remove deleted)
+                    dry_run=False
+                )
+                logger.info(f"Self-database sync complete: Added={sync_stats.get('added', 0)}, "
+                          f"Deleted={sync_stats.get('deleted', 0)}, "
+                          f"Unchanged={sync_stats.get('unchanged', 0)}")
+            except Exception as e:
+                logger.warning(f"Self-database sync had issues: {e}. Continuing with report generation...")
+        else:
+            logger.warning("Self-database sync function not available. Skipping sync step.")
+        
+        # STEP 2: Generate the report
         report = report_generator.generate_weekly_report(monday_date=monday_date)
         
-        # Build PDF
+        # STEP 3: Build PDF (this also saves JSON automatically)
         pdf_path = pdf_report_builder.build_report(report)
         
         total_time = time.time() - start_time
@@ -2299,6 +2331,191 @@ async def get_report(report_id: str):
     except Exception as e:
         logger.error(f"Error retrieving report {report_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error retrieving report: {str(e)}")
+
+
+@app.get("/reports/{report_id}/data", tags=["Reports"])
+async def get_report_data(report_id: str):
+    """
+    Get a specific report's JSON data by report ID
+    
+    Args:
+        report_id: The report ID (e.g., report_20250120_abc12345)
+        
+    Returns:
+        JSON data of the report
+    """
+    try:
+        # Check both possible report paths
+        report_paths = [
+            Path("data/reports"),
+            Path("scripts/data/reports"),
+            Config.REPORT_OUTPUT_PATH  # Also check configured path
+        ]
+        
+        json_path = None
+        for reports_dir in report_paths:
+            candidate_path = reports_dir / f"{report_id}.json"
+            if candidate_path.exists():
+                json_path = candidate_path
+                break
+        
+        if json_path is None:
+            raise HTTPException(status_code=404, detail=f"Report data not found: {report_id}")
+        
+        # Read and return JSON file
+        with open(json_path, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+        
+        return JSONResponse(
+            content=json_data,
+            media_type="application/json"
+        )
+        
+    except HTTPException:
+        raise
+    except json.JSONDecodeError as e:
+        logger.error(f"Error parsing JSON for report {report_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error parsing report data: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error retrieving report data {report_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving report data: {str(e)}")
+
+
+@app.get("/report-image", tags=["Reports"])
+async def get_report_image(image_path: str = Query(..., description="Image path from report (can be full path or filename)")):
+    """
+    Serve trademark image from report data.
+    
+    Accepts the image_path from the report JSON (which may be a full absolute path)
+    and serves the corresponding image from the api/data/extracted folder.
+    
+    Args:
+        image_path: The image path from the report JSON. Can be:
+                   - Full absolute path: "/Users/.../api/data/extracted/filename.png"
+                   - Relative path: "api/data/extracted/filename.png"
+                   - Just filename: "filename.png"
+    
+    Returns:
+        Image file or 404 if not found
+    """
+    try:
+        # URL decode the path in case it's encoded
+        image_path = unquote(image_path)
+        
+        # Extract just the filename from the path
+        # Handle full paths like "/Users/.../api/data/extracted/filename.png"
+        # or relative paths like "api/data/extracted/filename.png"
+        if '/' in image_path or '\\' in image_path:
+            # Extract filename from path
+            filename = Path(image_path).name
+        else:
+            # Already just a filename
+            filename = image_path
+        
+        # Determine the extracted images directory
+        project_root = Path(__file__).parent  # project root
+        api_dir = project_root / "api"
+        
+        # Possible extracted directory locations (in order of preference)
+        possible_dirs = [
+            api_dir / "data" / "extracted",  # api/data/extracted (where files actually are)
+            project_root / "data" / "extracted",  # data/extracted (config default)
+            Config.EXTRACTED_IMAGES_PATH.resolve(),  # From config
+        ]
+        
+        # Find the directory that exists and contains images
+        extracted_dir = None
+        image_file = None
+        for possible_dir in possible_dirs:
+            if possible_dir.exists():
+                # Check if the file exists in this directory
+                candidate_path = possible_dir / filename
+                if candidate_path.exists() and candidate_path.is_file():
+                    extracted_dir = possible_dir
+                    image_file = candidate_path
+                    break
+        
+        # If not found, default to api/data/extracted and try there
+        if extracted_dir is None:
+            extracted_dir = api_dir / "data" / "extracted"
+            image_file = extracted_dir / filename
+        
+        # Check if file exists
+        if not image_file.exists() or not image_file.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Image not found: {filename}. Checked in {extracted_dir}"
+            )
+        
+        # Determine media type based on file extension
+        suffix = image_file.suffix.lower()
+        if suffix == '.png':
+            media_type = "image/png"
+        elif suffix in ['.jpg', '.jpeg']:
+            media_type = "image/jpeg"
+        elif suffix == '.gif':
+            media_type = "image/gif"
+        elif suffix == '.webp':
+            media_type = "image/webp"
+        else:
+            media_type = "image/png"  # Default to PNG
+        
+        return FileResponse(
+            path=str(image_file),
+            media_type=media_type,
+            filename=filename
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving report image: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error serving image: {str(e)}")
+
+
+@app.get("/applicant-email", tags=["Reports"])
+async def get_applicant_email(applicant_name: str = Query(..., description="Applicant name to search for")):
+    """
+    Get applicant email address by applicant name from the self database.
+    
+    Args:
+        applicant_name: The full name of the applicant (e.g., "VFS GLOBAL SERVICES PLC" or "John Doe")
+        
+    Returns:
+        Dictionary with applicant email or error message
+    """
+    try:
+        if not applicant_name or not applicant_name.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Applicant name is required"
+            )
+        
+        # Query the database for applicant email
+        email = application_queries.get_applicant_email_by_name(applicant_name.strip())
+        
+        if email:
+            return {
+                "status": "success",
+                "applicant_name": applicant_name.strip(),
+                "email": email
+            }
+        else:
+            return {
+                "status": "not_found",
+                "applicant_name": applicant_name.strip(),
+                "email": None,
+                "message": f"No email found for applicant: {applicant_name.strip()}"
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving applicant email for '{applicant_name}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving applicant email: {str(e)}"
+        )
 
 
 @app.get("/reports", response_model=ReportListResponse, tags=["Reports"])

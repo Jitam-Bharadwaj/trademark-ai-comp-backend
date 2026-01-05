@@ -5,6 +5,7 @@ Uses reportlab to generate formatted PDF reports.
 """
 
 import logging
+import json
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -152,7 +153,43 @@ class PDFReportBuilder:
         doc.build(story)
         
         logger.info(f"PDF report generated: {filepath}")
+        
+        # Save JSON data alongside PDF
+        json_path = self.save_report_json(report)
+        
         return filepath
+    
+    def save_report_json(self, report: WeeklyReport) -> Path:
+        """
+        Save the WeeklyReport data as JSON for frontend consumption.
+        
+        Args:
+            report: WeeklyReport object containing all data
+            
+        Returns:
+            Path to the generated JSON file
+        """
+        # Generate filename matching PDF pattern
+        filename = f"{report.report_id}.json"
+        filepath = self.output_dir / filename
+        
+        logger.info(f"Saving report JSON data: {filepath}")
+        
+        try:
+            # Use Pydantic's model_dump_json() for proper serialization
+            # This handles datetime objects and nested models correctly
+            json_data = report.model_dump_json(indent=2, exclude_none=False)
+            
+            # Write to file
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(json_data)
+            
+            logger.info(f"Report JSON data saved: {filepath}")
+            return filepath
+            
+        except Exception as e:
+            logger.error(f"Failed to save report JSON: {e}", exc_info=True)
+            raise
     
     def _build_cover_page(self, report: WeeklyReport) -> list:
         """Build the cover page content"""
