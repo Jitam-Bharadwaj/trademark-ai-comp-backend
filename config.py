@@ -40,7 +40,7 @@ class Config:
     # Processing
     BATCH_SIZE = int(os.getenv("BATCH_SIZE", "32"))
     NUM_WORKERS = int(os.getenv("NUM_WORKERS", "4"))
-    SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.5"))
+    SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.35"))
     
     # Text Similarity Configuration
     ENABLE_OCR = os.getenv("ENABLE_OCR", "true").lower() == "true"
@@ -50,7 +50,7 @@ class Config:
     # Hybrid Search Weights (must sum to 1.0)
     VECTOR_SIMILARITY_WEIGHT = float(os.getenv("VECTOR_SIMILARITY_WEIGHT", "0.7"))
     TEXT_SIMILARITY_WEIGHT = float(os.getenv("TEXT_SIMILARITY_WEIGHT", "0.3"))
-    TEXT_SIMILARITY_THRESHOLD = float(os.getenv("TEXT_SIMILARITY_THRESHOLD", "0.5"))  # Lowered from 0.6 to catch more matches
+    TEXT_SIMILARITY_THRESHOLD = float(os.getenv("TEXT_SIMILARITY_THRESHOLD", "0.35"))  # Lowered from 0.6 to catch more matches
     
     # Text Similarity Algorithm Weights
     LEVENSHTEIN_WEIGHT = float(os.getenv("LEVENSHTEIN_WEIGHT", "0.4"))
