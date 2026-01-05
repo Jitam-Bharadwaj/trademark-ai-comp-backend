@@ -491,6 +491,67 @@ class ApplicationQueries:
     def enable_cache(self):
         """Enable caching"""
         self._cache_enabled = True
+    
+    def get_applicant_email_by_name(self, applicant_name: str) -> Optional[str]:
+        """
+        Get applicant email address by applicant name.
+        
+        Searches for applicants where the concatenated first_name and last_name
+        matches the provided applicant_name.
+        
+        Args:
+            applicant_name: The full name of the applicant (e.g., "John Doe" or "VFS GLOBAL SERVICES PLC")
+            
+        Returns:
+            Email address if found, None otherwise
+        """
+        if not applicant_name or not applicant_name.strip():
+            return None
+        
+        try:
+            # Clean the applicant name (remove extra spaces)
+            applicant_name_clean = ' '.join(applicant_name.strip().split())
+            
+            # Query to find email by matching applicant name
+            # Match where CONCAT(first_name, ' ', last_name) equals the applicant_name
+            # Also handle cases where first_name alone matches (for names without last_name)
+            query = """
+                SELECT DISTINCT tu.email
+                FROM tr_users tu
+                INNER JOIN tr_application_applicants taa ON tu.id = taa.applicant_id
+                WHERE (
+                    CONCAT(COALESCE(tu.first_name, ''), ' ', COALESCE(tu.last_name, '')) = %s
+                    OR TRIM(CONCAT(COALESCE(tu.first_name, ''), ' ', COALESCE(tu.last_name, ''))) = %s
+                    OR tu.first_name = %s
+                )
+                AND tu.email IS NOT NULL
+                AND tu.email != ''
+                LIMIT 1
+            """
+            
+            result = db.execute_query(
+                query, 
+                params=(applicant_name_clean, applicant_name_clean.strip(), applicant_name_clean),
+                fetch_one=True
+            )
+            
+            if result:
+                if isinstance(result, dict):
+                    email = result.get('email')
+                else:
+                    # Handle tuple result
+                    email = result[0] if len(result) > 0 else None
+                
+                if email:
+                    logger.info(f"Found email for applicant '{applicant_name}': {email}")
+                    return email
+            
+            logger.debug(f"No email found for applicant: {applicant_name}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error querying applicant email for '{applicant_name}': {e}")
+            return None
 
 
 # Global instance

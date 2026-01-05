@@ -39,14 +39,14 @@ class ReportGenerator:
     
     # Similarity thresholds for report generation
     # Text-to-text comparison uses higher threshold (same modality)
-    TEXT_SIMILARITY_THRESHOLD = 0.5
+    TEXT_SIMILARITY_THRESHOLD = 0.35
     
     # Image-to-text (cross-modal) uses lower threshold because CLIP cross-modal
     # scores are naturally lower than same-modality comparisons
     VECTOR_SIMILARITY_THRESHOLD = 0.25
     
     # For reporting purposes, use the text threshold as the "official" threshold
-    REPORT_SIMILARITY_THRESHOLD = 0.5
+    REPORT_SIMILARITY_THRESHOLD = 0.35
     
     def __init__(self, vector_db: VectorDatabase, text_similarity: Optional[TextSimilarity] = None):
         """
